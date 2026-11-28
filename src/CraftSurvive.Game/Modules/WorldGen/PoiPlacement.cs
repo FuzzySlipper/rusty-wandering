@@ -88,12 +88,16 @@ internal sealed class PoiPlacement
     private readonly ITerrainDraws draws;
     private readonly ITerrainColumns columns;
     private readonly long radius;
+    private readonly Func<long, long, PlannedUnderground.Mouth?>? mouthIn;
     /// <summary>Each anchor cell's decision, read by the chunk workers too (#10907).</summary>
     private readonly SharedCache<(long X, long Z), PoiSite?> cells = new(PoiConstants.SiteCacheLimit);
 
-    internal PoiPlacement(TerrainGeneratorContract contract, ITerrainDraws draws, ITerrainColumns columns, long radius)
+    /// <param name="mouthIn">The cave mouth the underground plan puts in an anchor cell (#11220), or null for a world with no plan.</param>
+    internal PoiPlacement(TerrainGeneratorContract contract, ITerrainDraws draws, ITerrainColumns columns, long radius,
+        Func<long, long, PlannedUnderground.Mouth?>? mouthIn = null)
     {
         this.contract = contract;
+        this.mouthIn = mouthIn;
         this.draws = draws ?? throw new ArgumentNullException(nameof(draws));
         this.columns = columns ?? throw new ArgumentNullException(nameof(columns));
         this.radius = radius;
@@ -162,6 +166,12 @@ internal sealed class PoiPlacement
     private PoiSite? DecideSite(long cellX, long cellZ)
     {
         const uint seedVersion = TerrainGeneratorContract.PoiSeedVersion;
+        // A cave mouth comes from the underground plan (#11220), and a cell holding one is its landmark.
+        if (mouthIn?.Invoke(cellX, cellZ) is PlannedUnderground.Mouth mouth && MouthSite(cellX, cellZ, mouth, seedVersion) is PoiSite opening)
+        {
+            return opening;
+        }
+
         bool continental = MapScale.IsContinental(contract.Extent);
         if (!continental && !contract.DrawUnit(draws, "poi.present", cellX, cellZ, PoiConstants.OneIn, seedVersion))
         {
@@ -225,10 +235,42 @@ internal sealed class PoiPlacement
             kind = Reconcile(preferred, column, relief, PoiConstants.VantageMinimumHeight);
         }
 
+        // The landmark draw's cave mouths are the plan's now (#11220): a cell that drew one holds nothing, so every other kind
+        // stays where it stood.
+        if (kind == PoiKind.CaveMouth)
+        {
+            return null;
+        }
+
         (long minimum, long range) = HeightRangeFor(kind);
         long height = contract.DrawLong(draws, "poi.height", cellX, cellZ, minimum, minimum + range - 1, seedVersion);
         long variant = contract.DrawLong(draws, "poi.variant", cellX, cellZ, 0, PoiConstants.LastVariant, seedVersion);
         return new PoiSite(cellX, cellZ, kind, x, z, column.Surface, height, variant, aspect);
+    }
+
+    /// <summary>
+    /// A plan mouth as its cell's landmark (#11220): where it opens, on the ground there, facing into the hill (or with no face,
+    /// a sinkhole's or a cliff's), its height and variant drawn as any site's. None where the ground there is under water or out
+    /// of the world, as for any site.
+    /// </summary>
+    private PoiSite? MouthSite(long cellX, long cellZ, PlannedUnderground.Mouth mouth, uint seedVersion)
+    {
+        long x = (long)Math.Floor(mouth.Opening.WorldX), z = (long)Math.Floor(mouth.Opening.WorldZ);
+        if (Math.Abs(x) > radius - PoiConstants.WorldMargin || Math.Abs(z) > radius - PoiConstants.WorldMargin)
+        {
+            return null;
+        }
+
+        TerrainColumn column = columns.ColumnAt(x, z);
+        if (column.Submerged)
+        {
+            return null;
+        }
+
+        (long minimum, long range) = HeightRangeFor(PoiKind.CaveMouth);
+        long height = contract.DrawLong(draws, "poi.height", cellX, cellZ, minimum, minimum + range - 1, seedVersion);
+        long variant = contract.DrawLong(draws, "poi.variant", cellX, cellZ, 0, PoiConstants.LastVariant, seedVersion);
+        return new PoiSite(cellX, cellZ, PoiKind.CaveMouth, x, z, column.Surface, height, variant, PlannedUnderground.AspectOf(mouth.Opening));
     }
 
     /// <summary>

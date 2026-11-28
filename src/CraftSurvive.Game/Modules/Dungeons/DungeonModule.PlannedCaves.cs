@@ -6,26 +6,19 @@ using CraftSurvive.Game.Modules.WorldGen;
 namespace CraftSurvive.Game.Modules.Dungeons;
 
 /// <summary>
-/// A planned cave system in the walking session (#11219, the first runtime milestone of the underground plan; design: wiki
-/// Combat and delving, "Caves form a planned underground"). When the player comes into a planned system's region or the next
-/// one, the system is built from the plan in the background (its region's skeleton on the continent's smooth ground, then the
-/// system on the walked ground) and its boxes are held by the terrain: their mouths' tendrils carve the overworld, and a
-/// landmark cave in their way gives way. From then on its boxes are asked for, admitted, dressed and released as the caves
-/// under landmark mouths are, nearest first, so a seam or a shaft is crossed into a box already there.
+/// The underground plan's cave systems in the walking session (#11219; every natural cave since #11220; design: wiki Combat
+/// and delving, "Caves form a planned underground"). The terrain carves a system's mouths' tendrils wherever its chunks are
+/// generated (the plan answers which boxes reach a region, <see cref="CaveUnderground.Near"/>). Here, each system sited
+/// within reach of the player is built from the plan in the background, and its boxes are then asked for, admitted, dressed
+/// and released nearest first, so a seam or a shaft is crossed into a box already there.
 /// </summary>
 internal sealed partial class DungeonModule
 {
-    /// <summary>
-    /// The systems this milestone takes from the plan (#11219): elsewhere the landmark table still places the caves (#11220
-    /// moves every natural cave to the plan). The golden seed's five-level system with a mouth on each level.
-    /// </summary>
-    internal static readonly IReadOnlyList<string> PlannedSystemIds = ["ug:fine:-2:-8:3"];
+    /// <summary>The system the plan commands act on when none is held near the player: the golden seed's five-level one (#11219).</summary>
+    internal const string GoldenSystemId = "ug:fine:-2:-8:3";
 
-    /// <summary>The plan level the walking session builds from: the standard (#11209: Patch took fine and its 12-box budget).</summary>
-    private const string PlannedLevel = "fine";
-
-    /// <summary>A planned system is built once the player is this many region tiles from its own (its region or the next).</summary>
-    private const int PlannedTileReach = 1;
+    /// <summary>A system is built once its site lies this near the player, in metres: past where its boxes are asked for.</summary>
+    private const double PlannedSystemReach = 2_500;
 
     private sealed record PlannedJob(UndergroundSystem? System, IReadOnlyList<CavePlacement> Boxes, double SkeletonMs, double SystemMs, int RegionTilesBuilt);
 
@@ -33,44 +26,36 @@ internal sealed partial class DungeonModule
 
     private readonly Dictionary<string, PlannedHeld> plannedHeld = [];
     private readonly HashSet<string> plannedAsked = [];
-    private UndergroundPlanner? planner;
+    /// <summary>The plan the world's caves come from (the recipe's: built on the walked ground the boxes are buried under).</summary>
+    private PlannedUnderground Underground => terrain.Recipe.Underground;
 
-    /// <summary>The plan, built on the walked ground the boxes are buried under (the recipe's continuous height).</summary>
-    private UndergroundPlanner Planner => planner ??= new UndergroundPlanner(terrain.Recipe.Map, UndergroundPlan.Preset(PlannedLevel),
-        (x, z) => terrain.Recipe.ContinuousHeightAt((long)Math.Floor(x), (long)Math.Floor(z)));
+    private UndergroundPlanner Planner => Underground.Planner;
 
     private static string PlanKey(string id) => "plan-" + id;
 
     /// <summary>Asks for the planned systems near the player, and holds those the background has built.</summary>
     private void FollowPlannedSystems()
     {
-        if (!terrain.Recipe.Map.Scale.Continental)
-        {
-            return;
-        }
-
         Vector3 feet = player.WorldFeetPosition;
-        (int tx, int tz) = MapRegions.TileAt(feet.X, feet.Z);
-        foreach (string id in PlannedSystemIds)
+        foreach (string id in Planner.SitesNear(feet.X, feet.Z, PlannedSystemReach).Select(s => s.Id))
         {
-            if (plannedAsked.Contains(id) || !TileOf(id, out int sx, out int sz) || Math.Abs(sx - tx) > PlannedTileReach || Math.Abs(sz - tz) > PlannedTileReach)
+            if (plannedAsked.Contains(id))
             {
                 continue;
             }
 
-            UndergroundPlanner plan = Planner;
+            PlannedUnderground plan = Underground;
             MapRegions? regions = terrain.Recipe.Regions;
             Generator.Request(PlanKey(id), () =>
             {
                 long tilesBefore = regions?.Built ?? 0;
                 long began = Stopwatch.GetTimestamp();
-                UndergroundSite? site = plan.Site(id);
+                UndergroundSite? site = plan.Planner.Site(id);
                 double skeletonMs = Stopwatch.GetElapsedTime(began).TotalMilliseconds;
                 long building = Stopwatch.GetTimestamp();
-                UndergroundSystem? system = site is null ? null : plan.SystemAt(site);
+                PlannedUnderground.Placed? placed = site is null ? null : plan.System(id);
                 double systemMs = Stopwatch.GetElapsedTime(building).TotalMilliseconds;
-                IReadOnlyList<CavePlacement> boxes = system is null ? [] : PlannedCaves.Placements(system);
-                return new PlannedJob(system, boxes, skeletonMs, systemMs, (int)((regions?.Built ?? 0) - tilesBefore));
+                return new PlannedJob(placed?.System, placed?.Boxes ?? [], skeletonMs, systemMs, (int)((regions?.Built ?? 0) - tilesBefore));
             });
             plannedAsked.Add(id);
         }
@@ -107,25 +92,9 @@ internal sealed partial class DungeonModule
                 continue;
             }
 
-            // The landmark caves in the system's way give way: one already asked for is let go.
-            foreach (CavePlacement gone in terrain.HoldPlanned(job.Boxes))
-            {
-                if (underCaves.TryGetValue(gone.Key, out UnderCave? landmark))
-                {
-                    Undress(landmark);
-                    if (landmark.Ready is not null)
-                    {
-                        terrain.ReleaseCave(landmark.Cave);
-                        cavesReleased++;
-                    }
-
-                    underCaves.Remove(gone.Key);
-                }
-            }
-
             plannedHeld[id] = new PlannedHeld(id, job.System, job.Boxes, job, queuedMs);
             lastCave = string.Create(CultureInfo.InvariantCulture,
-                $"holding the planned system {id}: {job.Boxes.Count} boxes, {job.System.Mouths.Count} mouths (skeleton {job.SkeletonMs:F0} ms, system {job.SystemMs:F0} ms, {job.RegionTilesBuilt} region tiles built, queued {queuedMs:F0} ms)");
+                $"built the planned system {id}: {job.Boxes.Count} boxes, {job.System.Mouths.Count} mouths (skeleton {job.SkeletonMs:F0} ms, system {job.SystemMs:F0} ms, {job.RegionTilesBuilt} region tiles built, queued {queuedMs:F0} ms)");
         }
     }
 
@@ -144,14 +113,6 @@ internal sealed partial class DungeonModule
     /// <summary>What a planned box is generated with: the plan's seed, setting and ports (the same the authoring tools use).</summary>
     private static (ulong Seed, CaveSetting Setting, KarstCave.Settings Settings) PlannedGeneration(CavePlacement box) =>
         PlannedCaveSettings.For(box.Planned!.System, box.Planned.Box.Index, UndergroundSettings());
-
-    private static bool TileOf(string id, out int tileX, out int tileZ)
-    {
-        string[] parts = id.Split(':');
-        tileX = tileZ = 0;
-        return parts.Length == 5 && int.TryParse(parts[2], NumberStyles.Integer, CultureInfo.InvariantCulture, out tileX)
-            && int.TryParse(parts[3], NumberStyles.Integer, CultureInfo.InvariantCulture, out tileZ);
-    }
 
     /// <summary>The planned systems: those asked for, held, their boxes asked for, ready and admitted, and what building them cost.</summary>
     internal string PlannedReadout()
@@ -185,8 +146,16 @@ internal sealed partial class DungeonModule
             }
         }
 
-        (int skeletons, int uncut, int built) = planner?.Counts ?? (0, 0, 0);
+        (int skeletons, int uncut, int built) = Planner.Counts;
         return text.Append(CultureInfo.InvariantCulture, $" planner skeletons={skeletons} uncut={uncut} built={built}").ToString();
+    }
+
+    /// <summary>The held system whose nearest box is nearest the player, or null.</summary>
+    private string? NearestHeldSystem()
+    {
+        Vector3 feet = player.WorldFeetPosition;
+        return plannedHeld.Values.Where(h => h.System is not null && h.Boxes.Count > 0)
+            .OrderBy(h => h.Boxes.Min(b => DistanceIn(b, feet))).ThenBy(h => h.Id, StringComparer.Ordinal).FirstOrDefault()?.Id;
     }
 
     // The walk through a planned system (#11219): its way is laid by PlanWay, not by EnsureWay's tendril-and-main-route.
@@ -202,7 +171,7 @@ internal sealed partial class DungeonModule
     {
         // One argument (live-debug splits on spaces): status, goto:M, way:A:B.
         string[] words = command.Split([' ', ':', ','], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        string id = PlannedSystemIds[0];
+        string id = NearestHeldSystem() ?? GoldenSystemId;
         if (words.Length == 0 || words[0] == "status")
         {
             return $"{PlannedReadout()}; {CavesReadout()}";

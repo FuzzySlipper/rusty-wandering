@@ -95,8 +95,8 @@ if (command == "pinch")
 {
     // Diagnostic: where a cave's route goes out of reach, stage by stage (see Pinch).
     string id = args.Length > 1 ? args[1] : throw new ArgumentException("pinch needs a mouth's id, poi:CX:CZ");
-    (ulong pinchSeed, CaveSetting pinchSetting, CavePlacement pinchPlacement) = Locate(id);
-    Pinch.Run(id, pinchSeed, pinchSetting, pinchPlacement, options.ContainsKey("summary"), Console.WriteLine);
+    (ulong pinchSeed, CaveSetting pinchSetting, KarstCave.Settings pinchSettings, CavePlacement pinchPlacement) = Locate(id);
+    Pinch.Run(id, pinchSeed, pinchSetting, pinchSettings, pinchPlacement, options.ContainsKey("summary"), Console.WriteLine);
     return 0;
 }
 
@@ -361,8 +361,8 @@ string pair = EnginePair(repo);
                 caves.Add(new JsonObject
                 {
                     ["id"] = row["id"]!.GetValue<string>(), ["x"] = row["x"]!.GetValue<long>(), ["z"] = row["z"]!.GetValue<long>(),
-                    ["ground"] = row["ground"]!.GetValue<long>(), ["seed"] = row["seed"]!.GetValue<string>(), ["setting"] = row["setting"]!.DeepClone(),
-                    ["tile"] = new JsonArray(tx, tz),
+                    ["ground"] = row["ground"]!.GetValue<long>(), ["system"] = row["system"]!.GetValue<string>(), ["box"] = row["box"]!.GetValue<int>(),
+                    ["seed"] = row["seed"]!.GetValue<string>(), ["setting"] = row["setting"]!.DeepClone(), ["tile"] = new JsonArray(tx, tz),
                 });
             }
 
@@ -480,8 +480,8 @@ int CaveCommand(string id)
     string file = Path.Combine(directory, id.Replace(':', '_') + ".json.gz");
     if (!File.Exists(file))
     {
-        (ulong seed, CaveSetting setting, CavePlacement placement) = Locate(id);
-        WriteGzip(file, CaveView.Make(id, seed, setting, placement));
+        (ulong seed, CaveSetting setting, KarstCave.Settings settings, CavePlacement placement) = Locate(id);
+        WriteGzip(file, CaveView.Make(id, seed, setting, settings, placement));
     }
 
     Console.WriteLine(file);
@@ -516,23 +516,20 @@ int SystemCommand(string level, string id)
     return 0;
 }
 
-// A cave in the export: its seed and setting as the export recorded them, and the mouth as its tile recorded it, placed as
-// the game places its cave.
-(ulong Seed, CaveSetting Setting, CavePlacement Placement) Locate(string id)
+// A cave in the export (#11220: a mouth's planned box): the system and box the export recorded under the mouth, built from the
+// plan on the walked ground as the game builds it, with the seed, setting and switches the walking session generates it with.
+(ulong Seed, CaveSetting Setting, KarstCave.Settings Settings, CavePlacement Placement) Locate(string id)
 {
-    JsonObject manifest = JsonNode.Parse(File.ReadAllText(Path.Combine(output, "manifest.json")))!.AsObject();
     JsonNode row = JsonNode.Parse(File.ReadAllText(Path.Combine(output, "caves.json")))!["caves"]!.AsArray().FirstOrDefault(cave => cave!["id"]!.GetValue<string>() == id)
         ?? throw new ArgumentException($"The export has no cave under {id}.");
-    JsonArray tileAt = row["tile"]!.AsArray();
-    JsonArray place = JsonNode.Parse(ReadGzip(Path.Combine(output, "tiles", $"{tileAt[0]}_{tileAt[1]}.json.gz")))!["places"]!.AsArray()
-        .Select(p => p!.AsArray()).First(p => PoiSite.IdFor(p[0]!.GetValue<long>(), p[1]!.GetValue<long>()) == id);
-    long[] v = [.. place.Select(p => p!.GetValue<long>())];
-    PoiSite site = new(v[0], v[1], (PoiKind)v[2], v[3], v[4], v[5], v[6], v[7], v[8]);
-    long radius = manifest["world"]!["size"]!.GetValue<long>() / 2;
-    CavePlacement placement = CavePlacement.Place(site, radius) ?? throw new InvalidOperationException($"{id} has no way underground.");
-    JsonArray setting = row["setting"]!.AsArray();
-    return (ulong.Parse(row["seed"]!.GetValue<string>(), NumberStyles.HexNumber, CultureInfo.InvariantCulture),
-        new(setting[0]!.GetValue<double>(), setting[1]!.GetValue<double>(), setting[2]!.GetValue<float>()), placement);
+    JsonObject config = JsonNode.Parse(File.ReadAllText(options.GetValueOrDefault("config", Path.Combine(repo, "authoring/tools/golden-seed/golden-seed.json"))))!.AsObject();
+    TerrainConfiguration configuration = new(config["seed"]!.GetValue<ulong>(), config["size"]!.GetValue<int>());
+    TerrainRecipe recipe = configuration.CreateRecipe(EngineTerrainDraws.Shared, WorldMapGenerator.Generate(configuration));
+    string systemId = row["system"]!.GetValue<string>();
+    int boxIndex = row["box"]!.GetValue<int>();
+    PlannedUnderground.Placed placed = recipe.Underground.System(systemId) ?? throw new InvalidOperationException($"The plan has no system {systemId}.");
+    (ulong seed, CaveSetting setting, KarstCave.Settings settings) = PlannedCaveSettings.For(placed.System, boxIndex, UnderCaves.Settings());
+    return (seed, setting, settings, placed.Boxes[boxIndex]);
 }
 
 static bool AllSea(WorldMap map, int tileX, int tileZ, long radius)

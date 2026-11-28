@@ -371,6 +371,9 @@ internal static class UndergroundPlan
     private const float MaxTendrilMetres = 100f;
     /// <summary>A resurgence's at most: the stream passage out to a valley floor that flattens out runs longer.</summary>
     private const float MaxResurgenceTendrilMetres = 240f;
+
+    /// <summary>How far any mouth's tendril runs from its box at most (a resurgence's), in metres.</summary>
+    internal const float LongestTendrilMetres = MaxResurgenceTendrilMetres;
     private const float TendrilStepMetres = 2f;
     /// <summary>A tendril this short through ground this steep is a cliff: the box face opens directly.</summary>
     private const float CliffTendrilMetres = 8f;

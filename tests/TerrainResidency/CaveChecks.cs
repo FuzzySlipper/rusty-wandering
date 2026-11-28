@@ -7,10 +7,10 @@ using CraftSurvive.Game.Modules.WorldGen;
 namespace CraftSurvive.Game.Tests;
 
 /// <summary>
-/// The caves under the world (#10889), checked on the default world without an Engine: every cave mouth's tendril is a
-/// pure function of its site; a cave's box lies under its mouth, sealed under the ground; generating a chunk a tendril or
-/// a cave reaches costs about what any chunk does; and the residency keeps a cave's chunks round a player deep in it and
-/// lets the overworld go.
+/// The caves under the world (#10889; from the underground plan since #11220), checked on the default world without an
+/// Engine: a cave mouth's box and tendril are a pure function of the plan; the tendril opens at the mouth and runs into its
+/// box, which lies under the ground; generating a chunk a tendril or a cave reaches costs about what any chunk does; and the
+/// residency keeps a cave's chunks round a player deep in it and lets the overworld go.
 /// </summary>
 internal static class CaveChecks
 {
@@ -21,7 +21,8 @@ internal static class CaveChecks
         recipe.Placement.CollectSitesNear(0, 0, 4000, sites);
         foreach (PoiSite site in sites.Where(s => s.Kind == PoiKind.CaveMouth).OrderBy(s => Math.Abs(s.X) + Math.Abs(s.Z)))
         {
-            if (recipe.Caves.For(site) is CavePlacement cave)
+            // A mouth with a tendril (a cliff mouth opens straight into its box's face).
+            if (recipe.Caves.For(site) is CavePlacement cave && cave.Tendrils.Count > 0)
             {
                 mouth = site;
                 return cave;
@@ -48,12 +49,13 @@ internal static class CaveChecks
         Check.That(twice is not null && twice.Corner == cave.Corner && twice.Path.SequenceEqual(cave.Path),
             "a cave mouth's tendril and box must be the same from every recipe");
 
-        // The tendril opens at the mouth and ends at the way in; the box's top lies under the mouth.
-        Vector3 start = cave.Path[0], end = cave.Path[^1];
+        // The tendril opens at the mouth and runs into its box, which lies under the ground.
         Check.That(cave.TendrilOpen(new Vector3(mouth.X + 0.5f, mouth.Ground + 1.5f, mouth.Z + 0.5f)) > 0f, "the tendril must open at the mouth");
-        Check.That(Vector3.Distance(cave.WayInWorld, end) < 3f, "the tendril must end at the cave's way in");
-        Check.That(cave.BoxMaximum.Y < mouth.Ground, "the cave's box must lie under its mouth's floor");
-        Check.That(end.Y < start.Y - 15f, "the tendril must go down into the ground");
+        Check.That(cave.Tendrils.Any(t => cave.InBox((long)Math.Floor(t.Path[^1].X), (long)Math.Floor(t.Path[^1].Y), (long)Math.Floor(t.Path[^1].Z), out _, out _, out _)),
+            "a mouth's tendril must end inside its cave's box");
+        long boxCentreX = (cave.BoxMinimum.X + cave.BoxMaximum.X) / 2, boxCentreZ = (cave.BoxMinimum.Z + cave.BoxMaximum.Z) / 2;
+        Check.That(cave.BoxMaximum.Y < recipe.ContinuousHeightAt(boxCentreX, boxCentreZ), "the cave's box must lie under the ground");
+        Vector3 start = cave.Path[0], end = cave.Path[^1];
 
         // A chunk the tendril reaches: its air is the tendril's, generated smooth (densities below the half-voxel face).
         TerrainChunkGenerator generator = new(recipe);
@@ -115,10 +117,10 @@ internal static class CaveChecks
 
         // --- lowland cave depth vs. bedrock floor and un-admitted cave chunk caching (#11187) ---
         {
-            // Lowest possible cave mouth (Ground = MinimumGroundHeight = 3) places its entire 64 m box above bedrock.
-            PoiSite lowlandMouth = new(0, 0, PoiKind.CaveMouth, 0, 0, PoiConstants.MinimumGroundHeight, 5, 0, 0);
-            CavePlacement? lowland = CavePlacement.Place(lowlandMouth, recipe.Radius);
-            Check.That(lowland is not null, "a lowland cave mouth at MinimumGroundHeight must still fit above bedrock");
+            // The lowest planned box near the origin (the plan keeps every box floor above the bedrock floor, #11220) sits
+            // wholly above bedrock, with bedrock intact under it.
+            CavePlacement? lowland = recipe.Underground.SystemsNear(0, 0, 4000).SelectMany(p => p.Boxes).MinBy(b => b.BoxMinimum.Y);
+            Check.That(lowland is not null, "the default world must have a planned box within 4 km of the origin");
             if (lowland is not null)
             {
                 long floorTop = recipe.MinimumMaterialY + GenerationConstants.WorldFloorThickness;
@@ -126,14 +128,10 @@ internal static class CaveChecks
                     $"a lowland cave box ({lowland.BoxMinimum.Y}) and tendril ({lowland.TendrilMinimum.Y}) must sit above the bedrock floor ({floorTop})");
                 Check.That(recipe.MaterialAt(new VoxelAddress((long)lowland.Corner.X, recipe.MinimumMaterialY, (long)lowland.Corner.Z)) == (ushort)BlockId.Bedrock,
                     "the bedrock floor directly under a lowland cave box must remain intact bedrock");
-                Check.That(recipe.MaterialAt(new VoxelAddress((long)lowland.Corner.X, floorTop, (long)lowland.Corner.Z)) == TerrainConstants.StoneMaterial,
-                    "solid stone must sit between the bedrock floor and a lowland cave box");
+                ushort between = recipe.MaterialAt(new VoxelAddress((long)lowland.Corner.X, floorTop, (long)lowland.Corner.Z));
+                Check.That(between != TerrainConstants.EmptyMaterial && between != (ushort)BlockId.Bedrock,
+                    $"solid rock must sit between the bedrock floor and the lowest cave box (found material {between})");
             }
-
-            // A hypothetical mouth below sea floor that would breach bedrock is refused by CavePlacement.Place.
-            PoiSite subFloorMouth = new(0, 0, PoiKind.CaveMouth, 0, 0, -10, 5, 0, 0);
-            Check.That(CavePlacement.Place(subFloorMouth, recipe.Radius) is null,
-                "a cave placement that would breach the world bedrock floor must be refused");
 
             // CaveUnderground.At must never rewrite or carve bedrock.
             Check.That(recipe.Caves.At(inside, recipe.SurfaceAt(inside.X, inside.Z), recipe.ContinuousHeightAt(inside.X, inside.Z), (ushort)BlockId.Bedrock) is null,

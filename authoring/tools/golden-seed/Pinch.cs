@@ -10,13 +10,13 @@ namespace GoldenSeed;
 /// </summary>
 internal static class Pinch
 {
-    internal static void Run(string id, ulong entranceSeed, CaveSetting setting, CavePlacement placement, bool summary, Action<string> log)
+    internal static void Run(string id, ulong entranceSeed, CaveSetting setting, KarstCave.Settings settings, CavePlacement placement, bool summary, Action<string> log)
     {
-        DungeonCandidate cave = DungeonCandidates.Generate(DungeonApproach.Karst, entranceSeed, 0, 1d, null, setting, UnderCaves.Settings());
+        DungeonCandidate cave = DungeonCandidates.Generate(DungeonApproach.Karst, entranceSeed, 0, 1d, null, setting, settings);
         UndergroundCave prepared = UnderCaves.Prepare(cave, placement);
         Func<Vector3, float> shape = cave.Layout.Shape!;
         KarstCave.Settings saved = KarstCave.Next;
-        KarstCave.Next = UnderCaves.Settings();
+        KarstCave.Next = settings;
         KarstCave.Result result;
         try { result = KarstCave.Build(cave.Seed, null, setting); }
         finally { KarstCave.Next = saved; }
@@ -133,18 +133,20 @@ internal static class Pinch
     }
 
     // Caves of the golden seed (seed 19, a 390 km world) each fault left mostly out of reach (#11170): a ruin's floor slab across
-    // the main route, and passages one sample wide read as a crawl. Each is its mouth as the export records it.
-    private static readonly (string Id, ulong Seed, CaveSetting Setting, PoiSite Mouth)[] Regressions =
+    // the main route, and passages one sample wide read as a crawl. They were landmark caves (retired by #11220); the generator
+    // faults stay checked with the seed, setting and way in they were found with.
+    private static readonly (string Id, ulong Seed, CaveSetting Setting)[] Regressions =
     [
-        ("poi:-450:142", 0xddb334bffef2b2a3UL, new(0.6581551388407052, 0.9781100612683269, 6.8167295f), new(-450, 142, (PoiKind)3, -115062, 36461, 128, 6, 6, 1)),
-        ("poi:-564:-198", 0x2a21154007b37e9dUL, new(0.2764952301810115, 0.9999999999999997, 52.555305f), new(-564, -198, (PoiKind)3, -144223, -50495, 1151, 7, 1, 3)),
-        ("poi:144:-593", 0xdb5f71bffcfa8a7aUL, new(0, 0.9728905080196582, 77.625f), new(144, -593, (PoiKind)3, 36996, -151556, 5588, 5, 7, 3)),
+        ("poi:-450:142", 0xddb334bffef2b2a3UL, new(0.6581551388407052, 0.9781100612683269, 6.8167295f)),
+        ("poi:-564:-198", 0x2a21154007b37e9dUL, new(0.2764952301810115, 0.9999999999999997, 52.555305f)),
+        ("poi:144:-593", 0xdb5f71bffcfa8a7aUL, new(0, 0.9728905080196582, 77.625f)),
     ];
+
+    /// <summary>Where the retired landmark caves' way in lay in their box (the regressions were found with it).</summary>
+    private static readonly Vector2 RegressionWayIn = new(12.5f, 48.5f);
 
     /// <summary>How far above a floor point a body's centre is looked for.</summary>
     private static readonly Vector3 BodyLift = new(0f, 0.6f, 0f);
-
-    private const long RegressionWorldRadius = 390000 / 2;
 
     /// <summary>The least share of its body room and of its main route each regression cave must leave in reach.</summary>
     private const double LeastRoom = 0.85, LeastAlong = 0.95;
@@ -156,12 +158,10 @@ internal static class Pinch
     internal static bool CheckRegressions(Action<string> report)
     {
         bool all = true;
-        foreach ((string id, ulong seed, CaveSetting setting, PoiSite mouth) in Regressions)
+        foreach ((string id, ulong seed, CaveSetting setting) in Regressions)
         {
-            CavePlacement placement = CavePlacement.Place(mouth, RegressionWorldRadius) ?? throw new InvalidOperationException($"{id} has no way underground.");
-            DungeonCandidate cave = DungeonCandidates.Generate(DungeonApproach.Karst, seed, 0, 1d, null, setting, UnderCaves.Settings());
-            UndergroundCave prepared = UnderCaves.Prepare(cave, placement);
-            Vector3 start = CaveView.JoinOf(prepared.Layout.MainRoute, cave.Layout.MainRoute) ?? cave.Layout.Arrival;
+            DungeonCandidate cave = DungeonCandidates.Generate(DungeonApproach.Karst, seed, 0, 1d, null, setting, UnderCaves.Settings() with { WayIn = RegressionWayIn });
+            Vector3 start = cave.Layout.MainRoute.Count > 0 ? cave.Layout.MainRoute[0] : cave.Layout.Arrival;
             CaveView.Reach fill = CaveView.Reach.Of(cave.Layout.Shape!, cave.Walkable.SizeX, cave.Walkable.SizeY, cave.Walkable.SizeZ, start);
             (double room, double along) = Shares(fill, cave.Layout.MainRoute);
             bool held = room >= LeastRoom && along >= LeastAlong;

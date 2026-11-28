@@ -122,6 +122,12 @@ internal static class PlaceLayouts
     /// <summary>The arch in the plane of the mouth, a little in front of the recess, its opening looking out of the hill.</summary>
     private static IEnumerable<PlacedPart> Cave(PoiSite site)
     {
+        // A plan mouth with no face on a slope (a sinkhole, a cliff, #11220) has no arch.
+        if (site.Aspect < 0)
+        {
+            yield break;
+        }
+
         (double cx, double cz) = Centre(site);
         (long forwardX, long forwardZ) = PoiStructures.CardinalOf(site.Aspect);
         Vector3 forward = new(forwardX, 0, forwardZ);

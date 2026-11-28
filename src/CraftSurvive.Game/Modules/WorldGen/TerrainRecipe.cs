@@ -55,12 +55,18 @@ internal sealed class TerrainRecipe : ITerrainColumns
 
             return [.. seats];
         }, LazyThreadSafetyMode.ExecutionAndPublication);
-        pois = new PoiPlacement(configuration.Contract, draws, this, radius);
+        underground = new(() => new PlannedUnderground(Map, (x, z) => ContinuousHeightAt((long)Math.Floor(x), (long)Math.Floor(z))),
+            LazyThreadSafetyMode.ExecutionAndPublication);
+        pois = new PoiPlacement(configuration.Contract, draws, this, radius, (cellX, cellZ) => Underground.MouthIn(cellX, cellZ));
         crossings = new CrossingPlacement(configuration.Contract, draws, this, radius);
-        caves = new CaveUnderground(pois, radius);
+        caves = new CaveUnderground(() => Underground);
     }
 
     private readonly CaveUnderground caves;
+    private readonly Lazy<PlannedUnderground> underground;
+
+    /// <summary>The world's natural caves, from the underground plan (#11220): its mouths and boxes.</summary>
+    internal PlannedUnderground Underground => underground.Value;
 
     /// <summary>The caves under the world (#10889): every cave mouth's tendril, and the caves generated so far, read into the chunks.</summary>
     internal CaveUnderground Caves => caves;

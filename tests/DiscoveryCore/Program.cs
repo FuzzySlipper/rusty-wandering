@@ -199,10 +199,12 @@ Check.That(alpineCavesAndVantages > alpineRuins,
     $"alpine karst must favor caves and vantages over ruins (caves+vantage={alpineCavesAndVantages}, ruins={alpineRuins})");
 Check.That(grassRuinsAndStones > grassCaves,
     $"grassland must favor ruins and standing stones over caves (ruins+stones={grassRuinsAndStones}, caves={grassCaves})");
-Check.That(karstForestCaves > lowRockForestCaves,
-    $"high karst rock must increase cave mouths (karst={karstForestCaves}, lowRock={lowRockForestCaves})");
+// Cave mouths come from the underground plan since #11220: a landmark draw that picks one places nothing, so karst rock no
+// longer raises the drawn count (karst={karstForestCaves}, lowRock={lowRockForestCaves}, both none without a plan).
+Check.That(karstForestCaves == 0 && lowRockForestCaves == 0 && grassCaves == 0,
+    $"without an underground plan the landmark draw must place no cave mouths (karst={karstForestCaves}, lowRock={lowRockForestCaves}, grass={grassCaves})");
 foreach (PoiKind kind in new[]
-    { PoiKind.StandingStones, PoiKind.Ruin, PoiKind.CaveMouth, PoiKind.DungeonEntrance, PoiKind.VantagePoint })
+    { PoiKind.StandingStones, PoiKind.Ruin, PoiKind.DungeonEntrance, PoiKind.VantagePoint })
 {
     Check.That(forestKinds.GetValueOrDefault(kind) > 0,
         $"continental hilly forest must reach {kind}; counts were " +
@@ -247,7 +249,7 @@ foreach (PoiSite site in forward.Values.Where(site => site is not null).Select(s
 }
 
 foreach (PoiKind kind in new[]
-    { PoiKind.StandingStones, PoiKind.Ruin, PoiKind.CaveMouth, PoiKind.DungeonEntrance, PoiKind.VantagePoint })
+    { PoiKind.StandingStones, PoiKind.Ruin, PoiKind.DungeonEntrance, PoiKind.VantagePoint })
 {
     Check.That(kindCounts.GetValueOrDefault(kind) > 0,
         $"the world must contain at least one {kind}; counts were " +
@@ -319,7 +321,7 @@ foreach (PoiSite site in forward.Values.Where(site => site is not null).Select(s
     carved += removed;
 
     // A way in is a hole: the kinds that are one must actually cut.
-    if (site.Kind is PoiKind.CaveMouth or PoiKind.DungeonEntrance)
+    if (site.Kind is PoiKind.DungeonEntrance || (site.Kind is PoiKind.CaveMouth && site.Aspect >= 0))
     {
         Check.That(removed > 0, $"{site.Id} is a {site.KindName} and must cut a way in");
     }

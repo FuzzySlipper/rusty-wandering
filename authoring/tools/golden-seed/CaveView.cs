@@ -42,11 +42,12 @@ internal static class CaveView
     /// <summary>The tallest face a starting character's full stamina bar climbs, in metres.</summary>
     internal static double ClimbReach => PlayerStamina.ClimbReachMetres(CharacterRules.Derive(CharacterAttributes.Starting, CharacterRules.MinimumLevel).MaximumStamina);
 
-    internal static string Make(string id, ulong seed, CaveSetting setting, CavePlacement placement)
+    /// <param name="settings">The box's switches as the walking session generates it (#11220: its planned box's, <see cref="PlannedCaveSettings.For"/>).</param>
+    internal static string Make(string id, ulong seed, CaveSetting setting, KarstCave.Settings settings, CavePlacement placement)
     {
         Stopwatch clock = Stopwatch.StartNew();
-        DungeonCandidate cave = DungeonCandidates.Generate(DungeonApproach.Karst, seed, 0, 1d, null, setting, UnderCaves.Settings());
-        // As the walking session admits it: the way down from the tendril carved, the route starting with it.
+        DungeonCandidate cave = DungeonCandidates.Generate(DungeonApproach.Karst, seed, 0, 1d, null, setting, settings);
+        // As the walking session admits it.
         UndergroundCave prepared = UnderCaves.Prepare(cave, placement);
         double generateMs = clock.Elapsed.TotalMilliseconds;
         DungeonLayout layout = cave.Layout;

@@ -34,25 +34,23 @@ internal static class UnderCaves
         return CaveSetting.Under(above.Temperature, above.Moisture, above.Elevation / Math.Max(1d, recipe.Map.Scale.PeakElevation), above.Rock);
     }
 
-    /// <summary>The box and switches of a cave under the world: the next caves' study switches, in the mouth's box, entered underground at the way in.</summary>
+    /// <summary>
+    /// The box and switches every cave under the world starts from: the next caves' study switches, in the standard box, nothing
+    /// open to a sky. A planned box's own ports, way in, water and spring go on top (<see cref="PlannedCaveSettings.For"/>).
+    /// </summary>
     internal static KarstCave.Settings Settings() => KarstCave.Next with
     {
         ChunksX = CavePlacement.BoxChunksX,
         ChunksY = CavePlacement.BoxChunksY,
         ChunksZ = CavePlacement.BoxChunksZ,
         Underground = true,
-        WayIn = CavePlacement.WayIn,
     };
-
-    /// <summary>The cave under a mouth, as the walking session asks for it before preparing it for the chunks.</summary>
-    internal static DungeonCandidate Generate(ulong worldSeed, PoiSite mouth, CaveSetting setting) =>
-        DungeonCandidates.Generate(DungeonApproach.Karst, Seed(worldSeed, mouth.CellX, mouth.CellZ), 0, 1d, null, setting, Settings());
 
     /// <summary>
     /// A generated cave made ready for the walking session (off the update): each voxel of its box as the overworld's chunks
     /// read it - its rock, mud and silt the cave's own blocks, the densities a natural cave is admitted with - and the
-    /// walking session's chunks holding its air, with every chunk beside them; and the way down from the tendril's end past
-    /// the first sink (<see cref="CaveWayDown"/>), the route starting with it. The authoring tools' cave view reads this too.
+    /// walking session's chunks holding its air, with every chunk beside them. A planned box is entered through its ports and
+    /// its sinkhole's way in, which the generator's walker carve made walkable (#10908). The authoring tools read this too.
     /// </summary>
     internal static UndergroundCave Prepare(DungeonCandidate candidate, CavePlacement cave)
     {
@@ -86,32 +84,12 @@ internal static class UnderCaves
             }
         }
 
-        // The way down from the tendril's end past the cave's first sink (R10889-3): a ramp the player walks back up, and the
-        // route starting with it.
-        // A planned box (#11219) is entered through its ports and its sinkhole's way in, which the generator made walkable.
-        Vector3[] lead = cave.IsPlanned ? [] : [.. cave.Path.Select(cave.ToCanonical).Where(p => p.X >= 0f && p.X < volume.SizeX && p.Z >= 0f && p.Z < volume.SizeZ && p.Y >= 0f && p.Y < volume.SizeY)];
-        CaveWayDown.Carved? down = cave.IsPlanned ? null : CaveWayDown.Carve(volume.SizeX, volume.SizeY, volume.SizeZ, materials, densities, lead.Length > 0 ? lead : [cave.ToCanonical(cave.Path[^1])],
-            candidate.Layout.MainRoute, CavePlacement.TendrilHalfWidth, CavePlacement.TendrilHalfHeight, CavePlacement.TendrilFloorBelowCentre,
-            TerrainConstants.EmptyMaterial, (ushort)BlockId.CaveLimestone);
-        foreach (int at in down?.Opened ?? [])
-        {
-            int i = at % volume.SizeX, j = at / volume.SizeX % volume.SizeY, k = at / (volume.SizeX * volume.SizeY);
-            Vector3 world = cave.ToWorld(new Vector3(i + 0.5f, j + 0.5f, k + 0.5f));
-            open.Add(new VoxelAddress((long)MathF.Floor(world.X), (long)MathF.Floor(world.Y), (long)MathF.Floor(world.Z)).Chunk);
-        }
-
         interior = new CaveInterior(volume.SizeX, volume.SizeY, volume.SizeZ, materials, densities);
         // What dressing it reads: the layout without the voxels it was generated in.
         DungeonLayout dressing = candidate.Layout with
         {
             Volume = new DungeonVolume(1, 1, 1, BlockId.Air), Rock = null, Densities = null, KitDrawn = null, Moisture = null,
-            MainRoute = down?.Route ?? candidate.Layout.MainRoute,
         };
-        if (down is not null)
-        {
-            // What the way down cut through: the ruin's pieces in its way and the dressing left hanging in its air.
-            dressing = CaveWayDown.Clear(dressing, down, CavePlacement.TendrilHalfWidth, CavePlacement.TendrilHalfHeight, CavePlacement.TendrilFloorBelowCentre);
-        }
         return new UndergroundCave(dressing, interior, ChunkNeighbours.Beside(open));
     }
 }

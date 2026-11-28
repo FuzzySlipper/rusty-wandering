@@ -17,7 +17,7 @@ if (args is ["walkers", string walkerCount, ..])
     int count = int.Parse(walkerCount, System.Globalization.CultureInfo.InvariantCulture);
     bool carve = !args.Contains("nocarve");
     System.Numerics.Vector2 UnderWayIn = new(12.5f, 48.5f);
-    const int RoutePointEvery = 16, UnderBoxChunksX = 6, UnderBoxChunksY = 4, UnderBoxChunksZ = 6;
+    const int RoutePointEvery = 16, UnderBoxChunksX = 6, UnderBoxChunksY = 4, UnderBoxChunksZ = 6, UnderSinkBelowTop = 5;
     int there = 0, back = 0, both = 0, settled = 0, routePoints = 0, routeReached = 0, routeLeft = 0, everyPoint = 0;
     long chambers = 0, rifts = 0, formations = 0, conduits = 0, waterfalls = 0, communities = 0, overgrowth = 0, ecology = 0, openCells = 0, dug = 0, floored = 0, touchDug = 0, touchFloored = 0, drops = 0, climbs = 0, highestPitch = 0;
     double generateMs = 0;
@@ -52,6 +52,16 @@ if (args is ["walkers", string walkerCount, ..])
         communities += layout.Communities.Count;
         overgrowth += layout.Overgrowth.Count;
         ecology += layout.Ecology.Count;
+        if (args.Contains("legs"))
+        {
+            Console.WriteLine($"  verdict {generated.Verdict.Reason[..Math.Min(900, generated.Verdict.Reason.Length)]}");
+            Console.WriteLine($"  main route {layout.MainRoute.Count} points, from {(layout.MainRoute.Count > 0 ? layout.MainRoute[0] : default)} to {(layout.MainRoute.Count > 0 ? layout.MainRoute[^1] : default)}");
+            foreach (KarstCave.WalkerLeg leg in generated.Report.WalkerLegs)
+            {
+                Console.WriteLine($"  leg {leg.Route} back={leg.Back} found={leg.Found} {leg.From}->{leg.To} cells={leg.Cells} dug={leg.Dug} floored={leg.Floored} searched={leg.Expanded}");
+            }
+        }
+
         foreach (KarstCave.WalkerLeg leg in generated.Report.WalkerLegs)
         {
             dug += leg.Dug;
@@ -61,8 +71,9 @@ if (args is ["walkers", string walkerCount, ..])
         touchDug += generated.Report.WalkerTouchUp.Dug;
         touchFloored += generated.Report.WalkerTouchUp.Floored;
         if (layout.MainRoute.Count < 2) continue;
-        System.Numerics.Vector3 a = layout.MainRoute[0], b = layout.MainRoute[^1];
-        (int, int, int)? from = walker.Settle((int)a.X, (int)a.Y, (int)a.Z, across: 3, down: 12);
+        // From the way in, where a body comes down the sink (the first sink under the box's roof), as the carve starts; to the spring.
+        System.Numerics.Vector3 b = layout.MainRoute[^1];
+        (int, int, int)? from = walker.Settle((int)UnderWayIn.X, sy - UnderSinkBelowTop, (int)UnderWayIn.Y, across: 3, down: 12);
         (int, int, int)? to = walker.Settle((int)b.X, (int)b.Y, (int)b.Z, across: 3, down: 12);
         if (from is not (int, int, int) f || to is not (int, int, int) t)
         {

@@ -64,6 +64,8 @@ internal static class WorldExportChecks
             if (!place.TryGetProperty("cave", out JsonElement cave)) continue;
             caves++;
             JsonElement path = cave.GetProperty("path");
+            // A cliff mouth has no tendril (#11220): it opens straight into its box.
+            if (path.GetArrayLength() == 0) continue;
             if (path.GetArrayLength() % 3 != 0
                 || Math.Abs(path[0].GetDouble() - place.GetProperty("x").GetInt64()) > CaveMouthReach
                 || Math.Abs(path[2].GetDouble() - place.GetProperty("z").GetInt64()) > CaveMouthReach)
@@ -106,13 +108,15 @@ internal static class WorldExportChecks
         int seedDiffers = 0;
         foreach (JsonElement cave in tile.RootElement.GetProperty("caves").EnumerateArray())
         {
-            string[] anchor = cave.GetProperty("id").GetString()!.Split(':');
-            ulong seed = CraftSurvive.Game.Modules.Dungeons.UnderCaves.Seed(map.Configuration.Seed, long.Parse(anchor[1], System.Globalization.CultureInfo.InvariantCulture),
-                long.Parse(anchor[2], System.Globalization.CultureInfo.InvariantCulture));
-            if (cave.GetProperty("seed").GetString() != seed.ToString("x16", System.Globalization.CultureInfo.InvariantCulture)) seedDiffers++;
+            // A mouth's cave is its planned box (#11220), generated from the plan's own seed for that box.
+            PlannedUnderground.Placed? placed = recipe.Underground.System(cave.GetProperty("system").GetString()!);
+            int box = cave.GetProperty("box").GetInt32();
+            ulong? seed = placed is null || box >= placed.System.Boxes.Count ? null
+                : CraftSurvive.Game.Modules.Dungeons.PlannedCaveSettings.For(placed.System, box, CraftSurvive.Game.Modules.Dungeons.UnderCaves.Settings()).Seed;
+            if (seed is null || cave.GetProperty("seed").GetString() != seed.Value.ToString("x16", System.Globalization.CultureInfo.InvariantCulture)) seedDiffers++;
         }
 
-        Check.That(seedDiffers == 0, "a tile's caves carry the seed the walking session generates them from");
+        Check.That(seedDiffers == 0, "a tile's caves carry the seed the walking session generates them from (their planned box's)");
 
         using JsonDocument named = JsonDocument.Parse(export.Places());
         string[] lakeKeys = [.. named.RootElement.GetProperty("lakes").EnumerateArray().Select(lake => lake.GetProperty("key").GetString()!)];

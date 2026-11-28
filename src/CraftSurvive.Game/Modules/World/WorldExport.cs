@@ -363,7 +363,7 @@ internal sealed class WorldExport
                 if (terrain.Caves.For(site) is CavePlacement cave)
                 {
                     writer.WriteStartObject("cave");
-                    CaveWay(writer, cave);
+                    CaveWay(writer, cave, site);
                     writer.WriteEndObject();
                 }
 
@@ -496,21 +496,24 @@ internal sealed class WorldExport
             writer.WriteStartArray("caves");
             foreach (PoiSite site in sites)
             {
-                if (terrain.Caves.For(site) is not CavePlacement cave) continue;
-                Dungeons.CaveSetting setting = Dungeons.UnderCaves.SettingAt(terrain, site.X, site.Z);
+                // A mouth's cave is its planned box (#11220), generated with the plan's own seed and setting.
+                if (terrain.Caves.For(site) is not CavePlacement cave || cave.Planned is not PlannedBox planned) continue;
+                (ulong caveSeed, Dungeons.CaveSetting setting, _) = Dungeons.PlannedCaveSettings.For(planned.System, planned.Box.Index, Dungeons.UnderCaves.Settings());
                 writer.WriteStartObject();
                 writer.WriteString("id", site.Id);
                 writer.WriteNumber("x", site.X);
                 writer.WriteNumber("z", site.Z);
                 writer.WriteNumber("ground", site.Ground);
-                writer.WriteString("seed", Dungeons.UnderCaves.Seed(map.Configuration.Seed, site.CellX, site.CellZ).ToString("x16", CultureInfo.InvariantCulture));
+                writer.WriteString("system", planned.System.Id);
+                writer.WriteNumber("box", planned.Box.Index);
+                writer.WriteString("seed", caveSeed.ToString("x16", CultureInfo.InvariantCulture));
                 writer.WriteStartArray("setting");
                 writer.WriteNumberValue(setting.Temperature);
                 writer.WriteNumberValue(setting.Moisture);
                 writer.WriteNumberValue(setting.DepthMetres);
                 writer.WriteEndArray();
                 writer.WriteNumber("turns", cave.QuarterTurns);
-                CaveWay(writer, cave);
+                CaveWay(writer, cave, site);
                 writer.WriteEndObject();
             }
 
@@ -532,10 +535,22 @@ internal sealed class WorldExport
         });
     }
 
-    private static void CaveWay(Utf8JsonWriter writer, CavePlacement cave)
+    /// <summary>How near its mouth a mouth's own tendril starts, in metres (one starts just outside it, #11219).</summary>
+    private const float MouthTendrilReach = 8f;
+
+    /// <summary>
+    /// A mouth's way underground: its own tendril's centre line (#11220: a box holds one per mouth; none for a cliff mouth, which
+    /// opens straight into the box), and the box.
+    /// </summary>
+    private static void CaveWay(Utf8JsonWriter writer, CavePlacement cave, PoiSite mouth)
     {
+        System.Numerics.Vector2 at = new(mouth.X, mouth.Z);
+        CaveTendril? own = cave.Tendrils.Where(t => t.Path.Count > 0)
+            .MinBy(t => System.Numerics.Vector2.Distance(new System.Numerics.Vector2(t.Path[0].X, t.Path[0].Z), at));
+        IReadOnlyList<System.Numerics.Vector3> path = own is not null
+            && System.Numerics.Vector2.Distance(new System.Numerics.Vector2(own.Path[0].X, own.Path[0].Z), at) <= MouthTendrilReach ? own.Path : [];
         writer.WriteStartArray("path");
-        foreach (System.Numerics.Vector3 point in cave.Path)
+        foreach (System.Numerics.Vector3 point in path)
         {
             writer.WriteNumberValue(Math.Round(point.X, 1));
             writer.WriteNumberValue(Math.Round(point.Y, 1));

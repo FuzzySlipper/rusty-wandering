@@ -73,6 +73,12 @@ internal static class PoiStructures
     /// </summary>
     private static PoiVoxel CaveMouth(PoiSite site, long x, long y, long z)
     {
+        // A plan mouth with no face on a slope (a sinkhole, a cliff, #11220) cuts no recess: its own opening is the way in.
+        if (site.Aspect < 0)
+        {
+            return PoiVoxel.None;
+        }
+
         long extent = PoiConstants.CaveHalfExtent;
         long depth = PoiConstants.CaveRecessDepth;
         (long forwardX, long forwardZ) = Cardinal(site.Aspect);

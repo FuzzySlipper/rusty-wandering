@@ -6,10 +6,9 @@ using CraftSurvive.Game.Modules.Terrain;
 namespace CraftSurvive.Game.Modules.WorldGen;
 
 /// <summary>
-/// A cave mouth's way underground (#10889): the tendril the overworld's generator carves from the mouth down into the
-/// hill, and the box a cave is generated in, placed under the hill so the tendril's end is the cave's way in. The cave's
-/// own (canonical) frame is turned a quarter at a time so the cave always runs on into the hill from its way in. All of it
-/// is a pure function of the mouth's site and the ground, so it is the same from every chunk that asks.
+/// A planned box under the world (#10889, #11219; every cave since #11220): the box a cave is generated in, where the
+/// underground plan put it, and the tendrils the overworld's generator carves from its mouths into it. All of it is a pure
+/// function of the plan, so it is the same from every chunk that asks.
 /// </summary>
 internal sealed class CavePlacement
 {
@@ -20,41 +19,14 @@ internal sealed class CavePlacement
     internal const int SizeY = BoxChunksY * TerrainConstants.ChunkEdgeLength;
     internal const int SizeZ = BoxChunksZ * TerrainConstants.ChunkEdgeLength;
 
-    /// <summary>Where in the cave's box its way in (its first sink) lies, in its own metres: near the end facing the mouth, across the middle.</summary>
-    internal static readonly Vector2 WayIn = new(12.5f, 48.5f);
-
     /// <summary>How high in the cave's box the generator's sinks lie (its grid's top less two and a half cells of two metres).</summary>
     internal const float SinkHeight = SizeY - 5f;
-
-    /// <summary>
-    /// How far the cave's box top lies under the mouth's floor. The tendril falls this far and the sink's depth in the box
-    /// besides: about 20 m in all, over <see cref="TendrilRun"/>, so the twilight zone is a walk, not a shaft.
-    /// </summary>
-    internal const float BoxTopBelowMouth = 12f;
-
-    /// <summary>How far the tendril runs into the hill, in metres along the mouth's facing.</summary>
-    internal const int TendrilRun = 60;
 
     /// <summary>The tendril's section: wider than tall, its floor a little under the mouth's.</summary>
     internal const float TendrilHalfWidth = 1.9f, TendrilHalfHeight = 1.6f;
 
-    /// <summary>How high over the mouth's floor the tendril's centre starts.</summary>
-    private const float TendrilStartAboveFloor = 1.4f;
-
-    /// <summary>How far the tendril runs on below the way in, so it opens into the cave's first passage rather than meeting it at a point.</summary>
-    private const float TendrilBelowWayIn = 2f;
-
-    /// <summary>How far the tendril bends aside at most, in metres.</summary>
-    private const float TendrilWander = 4f;
-
-    /// <summary>How far apart the tendril's path points are, in metres.</summary>
-    private const float TendrilStep = 2f;
-
     /// <summary>The rock kept over a cave everywhere: its air never comes nearer the overworld's ground than this.</summary>
     internal const int RoofMetres = 6;
-
-    /// <summary>Two caves' boxes and tendrils keep at least this far apart.</summary>
-    internal const int ApartMetres = 8;
 
     private CavePlacement(PoiSite site, int forwardX, int forwardZ, IReadOnlyList<CaveTendril> tendrils, Vector3 corner, PlannedBox? planned = null)
     {
@@ -108,9 +80,6 @@ internal sealed class CavePlacement
 
     /// <summary>The (first) tendril's centre line, from outside the mouth to below the way in, in world metres; empty with none.</summary>
     internal IReadOnlyList<Vector3> Path => Tendrils.Count > 0 ? Tendrils[0].Path : [];
-
-    /// <summary>The cave's way in, in world metres: the tendril's end.</summary>
-    internal Vector3 WayInWorld => ToWorld(new Vector3(WayIn.X, SinkHeight, WayIn.Y));
 
     /// <summary>A stable key for the mouth: its site's anchor cell (for a planned box, a key of its system and index).</summary>
     internal (long X, long Z) Key => (Site.CellX, Site.CellZ);
@@ -198,64 +167,7 @@ internal sealed class CavePlacement
     /// <summary>How far under the tendril's centre line its level floor lies: about 2.8 m of floor across, 2.7 m of headroom.</summary>
     internal const float TendrilFloorBelowCentre = 1.1f;
 
-    /// <summary>
-    /// The way underground behind a cave mouth, or null where none fits: the mouth's facing, the tendril's path down into
-    /// the hill and the box under it.
-    /// </summary>
-    internal static CavePlacement? Place(PoiSite site, long radius)
-    {
-        (long forwardX, long forwardZ) = PoiStructures.CardinalOf(site.Aspect);
-        int fx = (int)forwardX, fz = (int)forwardZ;
-        int ax = -fz, az = fx;
-        ulong hash = Mix(((ulong)site.CellX * 0x9E37_79B9_7F4A_7C15UL) ^ ((ulong)site.CellZ * 0xC2B2_AE3D_27D4_EB4FUL) ^ (ulong)site.Variant);
-        float wander = ((hash & 0xFFFF) / 65535f * 2f - 1f) * TendrilWander;
-        float startY = site.Ground + TendrilStartAboveFloor;
-        // The box's top lies under the mouth's floor; its first sink a little under that, where the tendril ends.
-        float wayInY = site.Ground - BoxTopBelowMouth - (SizeY - SinkHeight);
-        float endY = wayInY - TendrilBelowWayIn;
-        // The centre line: from a metre outside the mouth straight down an even slope (about 20 degrees) to the way in, so
-        // even a mouth on level ground opens into a short sloping cut rather than a trench; bending aside once and back.
-        List<Vector3> points = [];
-        int steps = (int)MathF.Ceiling((TendrilRun + 1) / TendrilStep);
-        for (int n = 0; n <= steps; n++)
-        {
-            float s = Math.Min(TendrilRun + 1f, n * TendrilStep);
-            float t = s / (TendrilRun + 1f);
-            float along = s - 1f;
-            float aside = wander * MathF.Sin(MathF.PI * t);
-            float y = startY + ((endY - startY) * t);
-            points.Add(new Vector3(site.X + 0.5f + (fx * along) + (ax * aside), y, site.Z + 0.5f + (fz * along) + (az * aside)));
-        }
-
-        Vector3 end = points[^1] + new Vector3(0f, TendrilBelowWayIn, 0f);
-        // The box's origin: the way in's world point less its place in the box, turned.
-        Vector3 corner = new(
-            end.X - (fx * WayIn.X) - (ax * WayIn.Y),
-            MathF.Round(end.Y - SinkHeight),
-            end.Z - (fz * WayIn.X) - (az * WayIn.Y));
-        corner = new Vector3(MathF.Round(corner.X), corner.Y, MathF.Round(corner.Z));
-        CavePlacement placement = new(site, fx, fz, [new CaveTendril([.. points], fx, fz, CaveTendril.SaltFor(site))], corner);
-        // The finite world's bounds: the box and tendril stay inside the border wall and above the bedrock floor (#11187).
-        long inner = radius - (GenerationConstants.WorldWallThickness + ApartMetres);
-        long floorTop = -GenerationConstants.TerrainDepth + GenerationConstants.WorldFloorThickness;
-        if (Math.Min(placement.BoxMinimum.X, placement.TendrilMinimum.X) < -inner || Math.Max(placement.BoxMaximum.X, placement.TendrilMaximum.X) > inner
-            || Math.Min(placement.BoxMinimum.Z, placement.TendrilMinimum.Z) < -inner || Math.Max(placement.BoxMaximum.Z, placement.TendrilMaximum.Z) > inner
-            || Math.Min(placement.BoxMinimum.Y, placement.TendrilMinimum.Y) < floorTop)
-        {
-            return null;
-        }
-
-        return placement;
-    }
-
-    /// <summary>Whether two placements come within <see cref="ApartMetres"/> of each other (their boxes and tendrils' bounds).</summary>
-    internal bool Crowds(CavePlacement other)
-    {
-        (long X, long Z) min = (Math.Min(BoxMinimum.X, TendrilMinimum.X) - ApartMetres, Math.Min(BoxMinimum.Z, TendrilMinimum.Z) - ApartMetres);
-        (long X, long Z) max = (Math.Max(BoxMaximum.X, TendrilMaximum.X) + ApartMetres, Math.Max(BoxMaximum.Z, TendrilMaximum.Z) + ApartMetres);
-        return other.BoxTouches(min.X, max.X, min.Z, max.Z) || other.TendrilTouches(min.X, max.X, min.Z, max.Z);
-    }
-
+    /// <summary>A 64-bit finaliser (splitmix's): a well-spread salt from a seed.</summary>
     internal static ulong Mix(ulong value)
     {
         value ^= value >> 33;
@@ -291,7 +203,7 @@ internal sealed class CaveTendril
 
     /// <param name="path">The centre line, a <see cref="CavePlacement"/>'s tendril step apart.</param>
     /// <param name="forwardX">The run's horizontal heading (a cardinal), or 0, 0 for a shaft, whose every segment is searched.</param>
-    /// <param name="salt">The wall noise's salt (a landmark mouth's comes from its site, <see cref="SaltFor"/>).</param>
+    /// <param name="salt">The wall noise's salt.</param>
     internal CaveTendril(Vector3[] path, int forwardX, int forwardZ, ulong salt)
     {
         this.path = path;
@@ -306,9 +218,6 @@ internal sealed class CaveTendril
     internal IReadOnlyList<Vector3> Path => path;
     internal (long X, long Y, long Z) Minimum { get; }
     internal (long X, long Y, long Z) Maximum { get; }
-
-    /// <summary>A landmark mouth's wall-noise salt, from its anchor cell.</summary>
-    internal static ulong SaltFor(PoiSite site) => ((ulong)site.CellX * 0x9E37_79B9UL) ^ ((ulong)site.CellZ * 0x85EB_CA6BUL);
 
     /// <summary>
     /// How far inside the tendril a world point is, in metres (positive inside, empty; negative in the rock round it): its
@@ -414,49 +323,21 @@ internal sealed record PlannedBox(UndergroundSystem System, UndergroundBox Box)
 /// </summary>
 internal sealed class CaveUnderground
 {
-    /// <summary>How far round a region cave mouths are looked for: a tendril's run and a box's diagonal.</summary>
-    private const long Reach = CavePlacement.TendrilRun + 140;
-
-    private readonly PoiPlacement pois;
-    private readonly long radius;
-    private readonly ConcurrentDictionary<(long X, long Z), CavePlacement?> placed = new();
+    private readonly Func<PlannedUnderground> plan;
     private readonly SharedCache<(long X, long Z), CavePlacement[]> nearChunk = new(NearChunkCacheLimit);
     private const int NearChunkCacheLimit = 16_384;
 
     // The caves admitted so far, swapped whole so a reader on any thread sees one consistent set.
     private volatile IReadOnlyDictionary<(long X, long Z), CaveInterior> admitted = new Dictionary<(long X, long Z), CaveInterior>();
 
-    // The planned systems' boxes the walking session holds (#11219), swapped whole likewise.
-    private volatile IReadOnlyList<CavePlacement> planned = [];
-
-    /// <summary>The planned systems' boxes held so far (#11219).</summary>
-    internal IReadOnlyList<CavePlacement> Planned => planned;
-
-    /// <summary>
-    /// Holds a planned system's boxes from now on (#11219): their tendrils carve the overworld, and a landmark cave mouth
-    /// whose way would crowd one of them has none (the plan's system takes its place). Returns the chunks this changes: the
-    /// new tendrils', and the tendrils and boxes of the landmark caves that gave way.
-    /// </summary>
-    internal (Func<TerrainChunkAddress, bool> Changed, IReadOnlyList<CavePlacement> GaveWay) Hold(IReadOnlyList<CavePlacement> boxes)
+    /// <param name="plan">The world's underground plan (#11220), asked for only when a cave is first looked for.</param>
+    internal CaveUnderground(Func<PlannedUnderground> plan)
     {
-        if (boxes.Count == 0 || boxes.Any(b => !b.IsPlanned))
-        {
-            throw new ArgumentException("Only planned boxes are held this way.", nameof(boxes));
-        }
-
-        CavePlacement[] gaveWay = [.. placed.Values.OfType<CavePlacement>().Where(landmark => boxes.Any(landmark.Crowds))];
-        planned = [.. planned, .. boxes];
-        placed.Clear();
-        nearChunk.Clear();
-        Revision++;
-        return (chunk => boxes.Any(b => b.ChunkTouchesTendril(chunk)) || gaveWay.Any(g => g.ChunkTouchesTendril(chunk) || g.ChunkTouchesBox(chunk)), gaveWay);
+        this.plan = plan ?? throw new ArgumentNullException(nameof(plan));
     }
 
-    internal CaveUnderground(PoiPlacement pois, long radius)
-    {
-        this.pois = pois ?? throw new ArgumentNullException(nameof(pois));
-        this.radius = radius;
-    }
+    /// <summary>The underground plan the caves come from.</summary>
+    internal PlannedUnderground Plan => plan();
 
     /// <summary>How many caves are read into the chunks now.</summary>
     internal int AdmittedCount => admitted.Count;
@@ -464,63 +345,12 @@ internal sealed class CaveUnderground
     /// <summary>Bumped whenever a cave is admitted or let go, so what was generated without it is generated again.</summary>
     internal long Revision { get; private set; }
 
-    /// <summary>The way underground behind a cave mouth, or null when it has none (it would leave the world, or crowd a cave before it).</summary>
-    internal CavePlacement? For(PoiSite site)
-    {
-        if (site.Kind != PoiKind.CaveMouth)
-        {
-            return null;
-        }
-
-        return placed.GetOrAdd((site.CellX, site.CellZ), _ =>
-        {
-            if (CavePlacement.Place(site, radius) is not CavePlacement candidate)
-            {
-                return null;
-            }
-
-            // A mouth whose way would crowd a planned box (#11219) has none: the plan's system takes its place.
-            if (planned.Any(candidate.Crowds))
-            {
-                return null;
-            }
-
-            // A mouth whose way would crowd an earlier mouth's (by anchor cell) has none: the earlier keeps its cave.
-            foreach (PoiSite other in SitesNear(candidate.Site.X, candidate.Site.Z, Reach * 2))
-            {
-                if (other.Kind == PoiKind.CaveMouth && Earlier(other, site) && CavePlacement.Place(other, radius) is CavePlacement earlier
-                    && candidate.Crowds(earlier))
-                {
-                    return null;
-                }
-            }
-
-            return candidate;
-        });
-    }
+    /// <summary>The box a cave mouth opens into (#11220: a mouth the plan put in its cell), or null for any other site.</summary>
+    internal CavePlacement? For(PoiSite site) =>
+        site.Kind == PoiKind.CaveMouth && Plan.MouthIn(site.CellX, site.CellZ) is PlannedUnderground.Mouth mouth ? Plan.BoxOf(mouth) : null;
 
     /// <summary>The ways underground whose tendril or box reaches into a region of columns.</summary>
-    internal IReadOnlyList<CavePlacement> Near(long xMin, long xMax, long zMin, long zMax)
-    {
-        List<CavePlacement> found = [];
-        foreach (PoiSite site in SitesNear((xMin + xMax) / 2, (zMin + zMax) / 2, Reach + Math.Max(xMax - xMin, zMax - zMin)))
-        {
-            if (For(site) is CavePlacement cave && (cave.BoxTouches(xMin, xMax, zMin, zMax) || cave.TendrilTouches(xMin, xMax, zMin, zMax)))
-            {
-                found.Add(cave);
-            }
-        }
-
-        foreach (CavePlacement box in planned)
-        {
-            if (box.BoxTouches(xMin, xMax, zMin, zMax) || box.TendrilTouches(xMin, xMax, zMin, zMax))
-            {
-                found.Add(box);
-            }
-        }
-
-        return found;
-    }
+    internal IReadOnlyList<CavePlacement> Near(long xMin, long xMax, long zMin, long zMax) => Plan.BoxesNear(xMin, xMax, zMin, zMax);
 
     /// <summary>The ways underground reaching into one chunk column, kept.</summary>
     internal CavePlacement[] NearChunkColumn(long chunkX, long chunkZ)
@@ -767,20 +597,4 @@ internal sealed class CaveUnderground
         return true;
     }
 
-    private IEnumerable<PoiSite> SitesNear(long x, long z, long reach)
-    {
-        long cell = PoiConstants.CellSize;
-        for (long cellX = GridMath.FloorDivide(x - reach, cell); cellX <= GridMath.FloorDivide(x + reach, cell); cellX++)
-        {
-            for (long cellZ = GridMath.FloorDivide(z - reach, cell); cellZ <= GridMath.FloorDivide(z + reach, cell); cellZ++)
-            {
-                if (pois.SiteAt(cellX, cellZ) is PoiSite site)
-                {
-                    yield return site;
-                }
-            }
-        }
-    }
-
-    private static bool Earlier(PoiSite a, PoiSite b) => a.CellX < b.CellX || (a.CellX == b.CellX && a.CellZ < b.CellZ);
 }

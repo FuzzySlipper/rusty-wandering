@@ -44,6 +44,8 @@ internal static class PlannedCaveSettings
             BoundaryPorts = ports[boxIndex],
             WaterTableTarget = box.WaterTableLocalY,
             SpringAt = SpringAt(system, boxIndex, ports),
+            // Every route walkable for a body with weight (#10908), a one-box system's with no ports too.
+            WalkerCarve = true,
         };
         return (box.BoxSeed, new CaveSetting(system.Temperature, system.Moisture, box.DepthBelowSurface), settings);
     }
