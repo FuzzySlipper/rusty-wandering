@@ -19,6 +19,7 @@ import golden as golden_module
 from golden import GoldenStore
 from library import CMS, DEFAULT_REVIEWS, REPO, Library
 import reviews as reviews_module
+import traversal as traversal_module
 from reviews import ReviewStore, Reviews
 from router import Response, Router
 
@@ -79,6 +80,7 @@ def create_router(workspace: Workspace) -> Router:
     catalog_module.register_routes(router, workspace)
     reviews_module.register_routes(router, workspace)
     golden_module.register_routes(router, workspace)
+    traversal_module.register_routes(router, workspace)
     return router
 
 

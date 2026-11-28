@@ -757,3 +757,44 @@ export interface SystemKarstView {
   sideZ: string;
   cells: { metres: number; size: [number, number, number]; state: string };
 }
+
+/** A traversal spot's 3D dump (#11226, craft.cave.dump): world positions; cells x fastest, then y, then z, from origin. */
+export interface TraversalSpot {
+  kind: 'traversal-spot';
+  feet: number[];
+  heading: number;
+  origin: number[];
+  size: number;
+  openAtLeast: number;
+  /** The walker's measure per cell (metres clear of rock; -1 rock). */
+  openness: number[];
+  terrain: number[];
+  engine: number[];
+  materials: Record<string, string>;
+  /** x, y, z, normal x, y, z, kind (1 voxel, 2 static mesh, 3 entity). */
+  hits: number[][];
+  meshes: Array<{ instance: number; asset: number; variant: number; variants: number; triangles: number[][][] }>;
+  /** x, y, z (feet), move (0 walk, 1 drop, 2 climb), cell index along the walker's way. */
+  walker: number[][];
+  way: number[][];
+  player: { feet: number[]; heading: number; radius: number; height: number };
+  climb?: { foot: number[]; ledge: number[]; axis: number[]; pitch: number };
+  report: string;
+}
+
+export interface TraversalSpotRow {
+  name: string;
+  modified: number;
+  from?: number;
+  to?: number;
+  along?: number;
+  wayLength?: number;
+  verdict?: string | null;
+}
+
+export interface TraversalSpotRecord {
+  name: string;
+  stall: Record<string, unknown> | null;
+  why: string;
+  spot: TraversalSpot;
+}

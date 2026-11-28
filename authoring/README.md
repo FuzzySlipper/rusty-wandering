@@ -68,6 +68,8 @@ runs it as a den-serve service). It reads files in place and writes nothing in g
 - **Marks, ratings and notes** on any record or atlas element, kept in `authoring/assets/cms/reviews.sqlite3`. A
   rating goes stale when the record's files change.
 - **Golden-seed atlas**: the export below, in layers.
+- **Traversal spots**: where a live cave walk stalled (`authoring/assets/traversal-spots/`, written by
+  `node scripts/live.mjs cavewalk`; see `scripts/README.md`): each spot's report and its 17 m cube in 3D.
 
 The web app is built into `authoring/tools/cms/web/dist/`, which is tracked, so the CMS runs without a build. After
 changing `web/src/`, rebuild it (`pnpm --dir authoring/tools/cms/web install` once). See `authoring/tools/cms/README.md`.

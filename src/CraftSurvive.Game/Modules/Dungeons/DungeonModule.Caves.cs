@@ -107,6 +107,7 @@ internal sealed partial class DungeonModule
         AdvanceDressing();
         long advanced = System.Diagnostics.Stopwatch.GetTimestamp();
         LightCave();
+        HoldResume();
         Steer();
         long done = System.Diagnostics.Stopwatch.GetTimestamp();
         static double Ms(long from, long to) => System.Diagnostics.Stopwatch.GetElapsedTime(from, to).TotalMilliseconds;
@@ -725,7 +726,7 @@ internal sealed partial class DungeonModule
             || !float.TryParse(ends[1], NumberStyles.Float, CultureInfo.InvariantCulture, out float to)
             || walkCave is not (long, long) key || !underCaves.TryGetValue(key, out UnderCave? cave))
         {
-            return "craft.cave.profile <from>-<to> metres along, after craft.cave.goto";
+            return "craft.cave.profile <from>-<to> metres along, after craft.cave.goto or craft.cave.plan way";
         }
 
         EnsureWay(cave);
@@ -772,20 +773,31 @@ internal sealed partial class DungeonModule
         return text.ToString();
     }
 
-    /// <summary>Assisted, for traversal proof: one world voxel ("x,y,z") as the chosen cave's box holds it and as the terrain answers.</summary>
+    /// <summary>
+    /// Assisted, for traversal proof: one world voxel ("x,y,z") as the box holding it has it (any ready box, a planned system's
+    /// or a landmark cave's, #11226), as the terrain answers it and as the Engine's collision holds it.
+    /// </summary>
     internal string CaveVoxel(string at)
     {
         long[] v = [.. at.Split(',').Select(t => long.TryParse(t, NumberStyles.Integer, CultureInfo.InvariantCulture, out long n) ? n : long.MinValue)];
-        if (v.Length != 3 || v.Contains(long.MinValue) || walkCave is not (long, long) key || !underCaves.TryGetValue(key, out UnderCave? cave)
-            || cave.Ready is not UndergroundCave ready)
+        if (v.Length != 3 || v.Contains(long.MinValue))
         {
-            return "craft.cave.voxel x,y,z after craft.cave.goto, once the cave is ready";
+            return "craft.cave.voxel x,y,z";
         }
 
-        string box = cave.Cave.InBox(v[0], v[1], v[2], out int i, out int j, out int k)
-            ? string.Create(CultureInfo.InvariantCulture, $"box ({i},{j},{k}) material={ready.Interior.Materials[ready.Interior.Index(i, j, k)]} magnitude={ready.Interior.Densities[ready.Interior.Index(i, j, k)]:F2}")
-            : "outside the box";
-        return string.Create(CultureInfo.InvariantCulture, $"{box}; terrain material={terrain.MaterialAt(new CraftSurvive.Game.Modules.Terrain.VoxelAddress(v[0], v[1], v[2]))}");
+        string box = "no ready box holds it";
+        foreach (UnderCave cave in underCaves.Values)
+        {
+            if (cave.Ready is UndergroundCave ready && cave.Cave.InBox(v[0], v[1], v[2], out int i, out int j, out int k))
+            {
+                box = string.Create(CultureInfo.InvariantCulture,
+                    $"{CaveName(cave.Cave)} ({i},{j},{k}) material={ready.Interior.Materials[ready.Interior.Index(i, j, k)]} magnitude={ready.Interior.Densities[ready.Interior.Index(i, j, k)]:F2} admitted={terrain.Caves.IsAdmitted(cave.Cave)}");
+                break;
+            }
+        }
+
+        return string.Create(CultureInfo.InvariantCulture,
+            $"{box}; terrain material={terrain.MaterialAt(new CraftSurvive.Game.Modules.Terrain.VoxelAddress(v[0], v[1], v[2]))} engine block={player.ClimbBlockAt(v[0], v[1], v[2])} resident={terrain.IsResident(new CraftSurvive.Game.Modules.Terrain.VoxelAddress(v[0], v[1], v[2]))}");
     }
 
     /// <summary>Where the player is along the way: the nearest point's distance along it and how far off it they stand.</summary>

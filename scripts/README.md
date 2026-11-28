@@ -110,7 +110,7 @@ are for the lane:
   `craft.save.manifest`, `craft.discovery.near`/`find`/`crossings`, `craft.feedback.readout`,
   `craft.cave.readout`: the caves under the world's cave mouths, how deep the player is and what
   is resident, cave and overworld);
-- setting up a live check (`craft.player.teleport`/`strike`, `craft.survival.set`,
+- setting up a live check (`craft.player.teleport`/`strike`, `craft.cave.resume`, `craft.survival.set`,
   `craft.world.hour`, `craft.inventory.grant`, `craft.creatures.restart`,
   `craft.dungeon.visit`, `craft.feedback.cue`, `craft.build.dig`, `craft.cave.goto` then
   `craft.cave.walk <metres>`: outside the nearest cave mouth, then on down its tendril and the
@@ -172,6 +172,67 @@ node scripts/live.mjs capture --until 'draft-hound.*shows=Search' --out /tmp/sea
   `rusty-scene-render`.
 - `craft.creatures.unseen <seconds>` hides the player from every creature, so hunters lose them where they stand and
   search there by the player's own light; `craft.creatures.rouse` wakes every creature to the player.
+
+**Traversal diagnostics: resume at a stall, and why a spot fails (#11226).**
+
+When a walk keeps failing at the same place, do not walk there again from the start: resume at the spot and read it
+up close. The planned-system walk and its stall handling are one lane command:
+
+```sh
+node scripts/live.mjs cavewalk --from 4 --to 3                       # M4 to M3 of ug:fine:-2:-8:3 on held input
+node scripts/live.mjs cavewalk --resume <dir>/stall.json --back 4    # again from 4 m before that stall
+```
+
+- `cavewalk` makes the golden-seed world (`--world 19:390000`) if it is not the one restored, holds the planned
+  system, lays the walker's way (`craft.cave.plan way:<from>:<to>`) and walks it on held input in real time, with the
+  product steering the view (`craft.cave.steer in`). It jumps at a lip and takes hold to climb when stopped, as a
+  player would.
+- A walk that makes no progress for `--stuck` seconds (default 25) gives up. It writes three files to `--out`
+  (default `authoring/assets/traversal-spots/M<from>-M<to>-<time>/`, ignored), then exits with 2:
+  - `stall.json`: the way, the distance along it, the feet and heading, and the jumps and climbs tried;
+  - `why.txt`: the report below;
+  - `spot.json`: the 3D dump.
+- `--resume <stall.json>` asks for the stall's own box first and holds the player at the spot until it is ready.
+  It then lays the way, places the player `--back` metres before the spot and walks on. On a host with the world
+  already restored but no cave asked for, the stall reproduces within a minute; a retry on a warm host takes about
+  20 s, most of it re-laying the walker's way.
+- The CMS's **Traversal spots** page (`python3 authoring/tools/cms/server.py`) lists the recorded spots with their
+  verdicts. A spot's page shows its report and the 17 m cube in 3D:
+  - the Engine's rock;
+  - the cells the walker counts solid but are not rock (barely open: the walker stands on them, the collision does not);
+  - the collision surface as a ray lattice meets it, green on voxels and magenta on static meshes;
+  - the static pieces' triangles;
+  - the walker's way, coloured by move, and the steering way;
+  - the player's capsule and heading, and the expected climb's foot and ledge.
+
+The commands underneath, for a spot anywhere (`here`, `along:<metres>` on the laid way, or `<x>,<y>,<z>,<heading>`:
+feet in world metres, degrees with 0 facing -z):
+
+- `craft.cave.resume <spot> | status` holds the player at the spot until it is ready, then places and faces them
+  (`ready=True`). The spot is ready once the box holding it is generated, admitted and dressed (its kit's collision
+  joined) and the 27 chunks about it are resident. Steering stops; `craft.cave.steer in` walks on.
+- `craft.cave.why <spot>` reads the spot as the offline walker (`CaveWalker`) expects it and as the live controller
+  answers, and lists where they disagree:
+  - the walker's nearest cell and moves about it;
+  - the way on, cell by cell: the collision floor under each walker floor and the rise from the cell before,
+    against the controller's 1.05 m step and 1.51 m jump;
+  - the next climb, its conditions re-read on the cells now;
+  - the face column as the walker, the terrain and the Engine hold it;
+  - a standing capsule at the expected stand and at the ledge (Engine overlap contacts);
+  - looks at the face along the climb's axis;
+  - the climb rule the walking world uses (`PlayerClimb.Find` on the Engine's voxels), from the expected stand and
+    from the player on all four axes, beside `climbprobe`'s natural read (used only in separate spaces);
+  - the static collision about it, and any ids it names twice.
+
+  It ends with a verdict: steering, model (the walker's rules and the controller's disagree) or shape. It takes about
+  a second.
+- `craft.cave.dump <spot>` is the same spot as JSON, the CMS's `spot.json`.
+- `craft.cave.plan goto:box:<box>` stands the player on the floor of any box of the held planned system, through the
+  same hold. `craft.cave.voxel x,y,z` reads a voxel in any ready box (planned or landmark), with the Engine's block and
+  residency. `craft.cave.profile <from>-<to>` follows a planned system's laid way too.
+- The report reads the collision through rays and capsule overlaps, and the static pieces from the product's own
+  composition (`TerrainWorld.LastStaticCollision`). The SDK does not hand back the Engine's voxel collision triangles,
+  so the voxel surface in the dump is the ray lattice's hits, not the mesh itself.
 
 **Spawning, inspecting and overriding one creature (#10926).**
 

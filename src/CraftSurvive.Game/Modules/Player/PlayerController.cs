@@ -466,6 +466,18 @@ internal sealed class PlayerController : IDisposable
     /// <summary>A diagnostic read of the natural face in front of the player, without climbing (#10126).</summary>
     internal string DescribeClimb(Vector3 forward) => climb.Describe(Session, playerLocal, forward);
 
+    /// <summary>Diagnostics (#11226): the natural face read as climbprobe reads it, from a body centre in the session's local frame.</summary>
+    internal string DescribeClimbAt(Vector3 localCentre, Vector3 forward) => climb.Describe(Session, localCentre, forward);
+
+    /// <summary>Diagnostics (#11226): the block the controller's climb rule reads at a global cell (the Engine's own voxel).</summary>
+    internal BlockId ClimbBlockAt(long x, long y, long z) => climb.BlockAt(Session, x, y, z);
+
+    /// <summary>Diagnostics (#11226): which climb rule the controller uses here (natural rock in a separate space; blocks in the walking world).</summary>
+    internal bool ClimbsNaturalRock => climbsNaturalRock;
+
+    /// <summary>Diagnostics (#11226): whether the player holds a face, the rail last composed, the yaw they look along.</summary>
+    internal (bool Held, ClimbRail? Rail, double YawRadians) ClimbState => (climbHeld, climb.LastRail, look.YawRadians);
+
     /// <summary>
     /// A separate space's still water (a cave's lakes and pools, #10094), set by its owner while the player is in it: for a
     /// place in the session, the water's surface and bed there, or null.

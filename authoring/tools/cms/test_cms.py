@@ -219,6 +219,23 @@ class ServerTests(unittest.TestCase):
             self.assertEqual(raised.exception.code, code, path)
             raised.exception.close()
 
+    def test_traversal_spots_are_listed_and_read(self):
+        root = Path(self.temp.name) / "authoring/assets/traversal-spots/M4-M3-a"
+        write(root / "spot.json", {"kind": "traversal-spot", "origin": [0, 0, 0], "size": 1})
+        write(root / "stall.json", {"from": 4, "to": 3, "along": 248.7, "wayLength": 554})
+        write(root / "why.txt", "spot feet 0,0,0\nverdict: model: the steps disagree\n")
+        listing = json.loads(self.get("/api/traversal")[1])
+        self.assertEqual(listing["spots"][0]["name"], "M4-M3-a")
+        self.assertEqual(listing["spots"][0]["verdict"], "model: the steps disagree")
+        spot = json.loads(self.get("/api/traversal/M4-M3-a")[1])
+        self.assertEqual(spot["spot"]["kind"], "traversal-spot")
+        self.assertEqual(spot["stall"]["along"], 248.7)
+        for name in ("missing", "..%2F..%2Fcontent"):
+            with self.assertRaises(urllib.error.HTTPError) as raised:
+                self.get("/api/traversal/" + name)
+            self.assertEqual(raised.exception.code, 404, name)
+            raised.exception.close()
+
 
 if __name__ == "__main__":
     unittest.main()

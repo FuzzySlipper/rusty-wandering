@@ -15,7 +15,7 @@ docs/evidence/
 __pycache__/
 # Raw and working asset files (concepts, references, generated sources, downloaded packs): kept out of git and
 # backed up to the den NAS by authoring/tools/assets-sync.sh. Their text (prompts, specs, provenance, READMEs) stays in
-# git beside them. MapLab's output and the golden-seed export are regenerable and not kept.
+# git beside them. MapLab's output, the golden-seed export and the live lane's traversal spots are regenerable and not kept.
 /authoring/assets/**
 !/authoring/assets/**/
 !/authoring/assets/**/*.txt
@@ -26,4 +26,5 @@ __pycache__/
 /authoring/assets/golden-seed.partial/
 /authoring/assets/golden-seed.previous/
 /authoring/assets/golden-seed-cache/
+/authoring/assets/traversal-spots/
 /authoring/tools/cms/web/node_modules/

@@ -8,7 +8,9 @@ export type Route =
   | { page: 'caves' }
   | { page: 'cave'; id: string }
   | { page: 'underground' }
-  | { page: 'system'; level: string; id: string };
+  | { page: 'system'; level: string; id: string }
+  | { page: 'traversal' }
+  | { page: 'spot'; name: string };
 
 const encode = (value: string): string => encodeURIComponent(value);
 
@@ -18,6 +20,7 @@ export const searchUrl = (term: string): string => `#search/${encode(term)}`;
 export const caveUrl = (id: string): string => `#cave/${encode(id)}`;
 export const atlasUrl = (ref?: string): string => (ref ? `#atlas/${encode(ref)}` : '#atlas');
 export const undergroundUrl = (): string => '#underground';
+export const traversalUrl = (name?: string): string => (name ? `#traversal/${encode(name)}` : '#traversal');
 export const systemUrl = (level: string, id: string): string => `#system/${encode(level)}/${encode(id)}`;
 
 export function parseHash(hash: string): Route {
@@ -41,6 +44,8 @@ export function parseHash(hash: string): Route {
       return { page: 'cave', id: tail };
     case 'underground':
       return { page: 'underground' };
+    case 'traversal':
+      return tail ? { page: 'spot', name: tail } : { page: 'traversal' };
     case 'system': {
       const level = decodeURIComponent(rest[0] ?? 'fine');
       const id = decodeURIComponent(rest.slice(1).join('/'));
@@ -62,6 +67,8 @@ export function activeSection(route: Route): string {
       return 'caves';
     case 'system':
       return 'underground';
+    case 'spot':
+      return 'traversal';
     default:
       return route.page;
   }

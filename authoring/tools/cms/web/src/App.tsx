@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'preact/hooks';
 import { apiRequest } from './api';
-import { activeSection, atlasUrl, listingUrl, parseHash, searchUrl, undergroundUrl, type Route } from './router';
+import { activeSection, atlasUrl, listingUrl, parseHash, searchUrl, traversalUrl, undergroundUrl, type Route } from './router';
 import { useApp } from './state';
 import { Empty } from './components/ui';
 import { OverviewPage } from './pages/OverviewPage';
@@ -11,6 +11,7 @@ import { SearchPage } from './pages/SearchPage';
 import { AtlasPage } from './pages/AtlasPage';
 import { CavePage, CavesPage } from './pages/CavesPage';
 import { SystemPage, UndergroundPage } from './pages/UndergroundPage';
+import { TraversalPage, TraversalSpotPage } from './pages/TraversalPage';
 
 interface GitStatus {
   gitAvailable: boolean;
@@ -39,6 +40,10 @@ function renderRoute(route: Route) {
       return <UndergroundPage />;
     case 'system':
       return <SystemPage level={route.level} id={route.id} />;
+    case 'traversal':
+      return <TraversalPage />;
+    case 'spot':
+      return <TraversalSpotPage name={route.name} />;
   }
 }
 
@@ -62,7 +67,7 @@ export function App() {
   }, [route.page]);
 
   const section = activeSection(route);
-  const atlas = route.page === 'atlas' || route.page === 'cave' || route.page === 'underground' || route.page === 'system';
+  const atlas = route.page === 'atlas' || route.page === 'cave' || route.page === 'underground' || route.page === 'system' || route.page === 'spot';
   return (
     <div class={`shell${atlas ? ' wide' : ''}`}>
       <aside class="sidebar">
@@ -85,6 +90,9 @@ export function App() {
           </a>
           <a href={undergroundUrl()} aria-current={section === 'underground' ? 'page' : undefined}>
             Underground plan
+          </a>
+          <a href={traversalUrl()} aria-current={section === 'traversal' ? 'page' : undefined}>
+            Traversal spots
           </a>
           {(catalog?.categories ?? []).map(category => (
             <a key={category.id} href={listingUrl(category.id)} aria-current={section === category.id ? 'page' : undefined}>

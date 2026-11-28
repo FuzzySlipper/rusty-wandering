@@ -25,20 +25,29 @@ public sealed class DungeonDebugModule : IDebugCommandModule
     [DebugCommand("craft.cave.walk", Description = "Assisted, for captures (#10889): moves the player this many metres on along the chosen cave's way in - down its tendril, then its main route once the cave is ready - facing the way on; negative walks back out.")]
     public string CaveWalk(float metres) => dungeons.CaveWalk(metres);
 
-    [DebugCommand("craft.cave.plan", Description = "Assisted, for the planned-system walk (#11219): status; goto:<mouth> stands the player outside that mouth of the planned system (first moving to its region so it is built); way:<entry>:<exit> lays the way between two side mouths through its boxes, which craft.cave.steer then follows on held input.")]
+    [DebugCommand("craft.cave.plan", Description = "Assisted, for the planned-system walk (#11219): status; goto:<mouth> stands the player outside that mouth of the planned system (first moving to its region so it is built); goto:box:<box> stands them on the floor of any of its boxes (#11226, held as craft.cave.resume holds); routes:<box> lists a box's required routes; way:<entry>:<exit> lays the way between two side mouths through its boxes, which craft.cave.steer then follows on held input.")]
     public string CavePlan(string command) => dungeons.Plan(command);
 
     [DebugCommand("craft.cave.steer", Description = "Assisted, for a walk on the player's own input (#10889): in turns the view each update toward the chosen cave's way a few metres on (down the tendril, then the main route), out back toward the mouth, off stops; held keys do the walking through the ordinary controller.")]
     public string CaveSteer(string mode) => dungeons.CaveSteer(mode);
 
-    [DebugCommand("craft.cave.profile", Description = "Assisted, for traversal proof (#10889 R10889-3): the chosen cave's way between two distances along it, given as from-to metres - each 2 m point with the floor under it and the ceiling over it as the terrain holds them - so a drop or a pinch on the way shows.")]
+    [DebugCommand("craft.cave.profile", Description = "Assisted, for traversal proof (#10889 R10889-3): the laid way (the chosen cave's, or a planned system's after craft.cave.plan way) between two distances along it, given as from-to metres - each 2 m point with the floor under it and the ceiling over it as the terrain holds them - so a drop or a pinch on the way shows.")]
     public string CaveProfile(string range) => dungeons.CaveProfile(range);
 
     [DebugCommand("craft.cave.slice", Description = "Assisted, for traversal proof (#10889 R10889-3): a vertical slice of the terrain across x at one z, given as x0,x1,y0,y1,z world cells - # rock, . air - to see a drop, a ledge or an overhang on a cave's way.")]
     public string CaveSlice(string box) => dungeons.CaveSlice(box);
 
-    [DebugCommand("craft.cave.voxel", Description = "Assisted, for traversal proof (#10889 R10889-3): one world voxel, given as x,y,z, as the chosen cave's box holds it (its cell, material and density) and as the terrain answers it.")]
+    [DebugCommand("craft.cave.voxel", Description = "Assisted, for traversal proof (#10889 R10889-3): one world voxel, given as x,y,z, as the ready box holding it has it (any box: a planned system's or a landmark cave's, #11226; its cell, material and density), as the terrain answers it and as the Engine's collision holds it.")]
     public string CaveVoxel(string at) => dungeons.CaveVoxel(at);
+
+    [DebugCommand("craft.cave.resume", Description = "Assisted, for traversal diagnostics (#11226): along:<metres> resumes a walk that far along the laid way (craft.cave.plan way, or a landmark cave's), at:<x>,<y>,<z>,<heading> at a feet point facing a heading (degrees, 0 faces -z); the player is held there until its box is admitted and dressed and the chunks about it are resident, then placed and faced (ready=True); status reads it. Steering stops: craft.cave.steer in walks on.")]
+    public string CaveResume(string spec) => dungeons.Resume(spec);
+
+    [DebugCommand("craft.cave.why", Description = "Assisted, for traversal diagnostics (#11226): why a spot fails - here, along:<metres> or <x>,<y>,<z>,<heading> (feet, degrees) - the offline walker's expectation there (its move, standing cell, pitch, ledge) against the live controller (its climb rule from the expected stand and from the player, climbprobe along the heading and either side, a standing capsule, the collision floor and face, the static pieces), the disagreements, and a verdict: steering, model or shape.")]
+    public string CaveWhy(string spec) => dungeons.Why(spec);
+
+    [DebugCommand("craft.cave.dump", Description = "Assisted, for traversal diagnostics (#11226): the spot's 3D dump as JSON (a 17 m cube about here, along:<metres> or <x>,<y>,<z>,<heading>): voxels (walker measure, terrain and Engine materials), the collision as a ray lattice meets it, static pieces' triangles, the walker's way, the steering way, the player and the report; the CMS's Traversal page shows it.")]
+    public string CaveDump(string spec) => dungeons.Dump(spec);
 
     [DebugCommand("craft.cave.store", Description = "Assisted, for retention proof (#10888 R10888-4): read says which of the caves asked for this session the store keeps for this world, and how many probe records; probe first writes 30 small probe records through the store as though 30 more caves had been generated (more than the 24 it once let go after).")]
     public string CaveStoreProbe(string action) => dungeons.CaveStoreProbe(action);

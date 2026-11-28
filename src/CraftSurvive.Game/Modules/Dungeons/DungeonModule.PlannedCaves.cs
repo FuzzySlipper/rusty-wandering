@@ -208,6 +208,11 @@ internal sealed partial class DungeonModule
             return $"{PlannedReadout()}; {CavesReadout()}";
         }
 
+        if (words[0] == "goto" && words.Length == 3 && words[1] == "box" && int.TryParse(words[2], NumberStyles.Integer, CultureInfo.InvariantCulture, out int gotoBox))
+        {
+            return PlanGoToBox(id, gotoBox);
+        }
+
         if (words[0] == "goto" && words.Length == 2 && int.TryParse(words[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out int mouthIndex))
         {
             if (!plannedHeld.TryGetValue(id, out PlannedHeld? held) || held.System is null)
@@ -282,7 +287,7 @@ internal sealed partial class DungeonModule
             return PlanWay(id, from, to);
         }
 
-        return "craft.cave.plan status | goto:<mouth> | way:<entry mouth>:<exit mouth>";
+        return "craft.cave.plan status | goto:<mouth> | goto:box:<box> | routes:<box> | way:<entry mouth>:<exit mouth>";
     }
 
     /// <summary>Lays the way from one side mouth of a held system to another, once every box on the way is ready.</summary>
@@ -437,6 +442,33 @@ internal sealed partial class DungeonModule
     }
 
     /// <summary>
+    /// How open a world cell is for the walker (#11219; #11226 reads it again about a point): the box's voxel (its density where
+    /// open, -1 where rock), else a mouth's tendril where that is more open.
+    /// </summary>
+    private static float WalkerOpenness(PlannedHeld held, (CavePlacement Box, CaveInterior Interior)[] boxes, long x, long y, long z)
+    {
+        // Open (the walker's measure: CaveWalker.OpenAtLeast), barely open, or rock: the box's voxel, else a tendril's.
+        float openness = -1f;
+        foreach ((CavePlacement box, CaveInterior interior) in boxes)
+        {
+            if (box.InBox(x, y, z, out int bi, out int bj, out int bk))
+            {
+                int at = interior.Index(bi, bj, bk);
+                openness = interior.Materials[at] == CraftSurvive.Game.Modules.Terrain.TerrainConstants.EmptyMaterial ? interior.Densities[at] : -1f;
+                break;
+            }
+        }
+
+        if (openness < CaveWalker.OpenAtLeast)
+        {
+            Vector3 centre = new(x + 0.5f, y + 0.5f, z + 0.5f);
+            openness = MathF.Max(openness, held.Boxes.Max(b => b.TendrilOpen(centre)));
+        }
+
+        return openness;
+    }
+
+    /// <summary>
     /// The way a walker takes between two points inside a held system (#11219, #10908's <see cref="CaveWalker"/>): on the voxels
     /// the terrain holds (the admitted boxes' interiors and the tendrils' air, rock elsewhere), walking, stepping, dropping one
     /// way and climbing pitches onto ledges, with no edits. Its points stand a walker's height over the floor.
@@ -466,25 +498,7 @@ internal sealed partial class DungeonModule
             for (int j = 0; j < sy; j++)
             for (int i = 0; i < sx; i++)
             {
-                long x = x0 + i, y = y0 + j, z = z0 + k;
-                // Open (the walker's measure: CaveWalker.OpenAtLeast), barely open, or rock: the box's voxel, else a tendril's.
-                float openness = -1f;
-                foreach ((CavePlacement box, CaveInterior interior) in boxes)
-                {
-                    if (box.InBox(x, y, z, out int bi, out int bj, out int bk))
-                    {
-                        int at = interior.Index(bi, bj, bk);
-                        openness = interior.Materials[at] == CraftSurvive.Game.Modules.Terrain.TerrainConstants.EmptyMaterial ? interior.Densities[at] : -1f;
-                        break;
-                    }
-                }
-
-                if (openness < CaveWalker.OpenAtLeast)
-                {
-                    Vector3 centre = new(x + 0.5f, y + 0.5f, z + 0.5f);
-                    openness = MathF.Max(openness, held.Boxes.Max(b => b.TendrilOpen(centre)));
-                }
-
+                float openness = WalkerOpenness(held, boxes, x0 + i, y0 + j, z0 + k);
                 solid[(((k * sy) + j) * sx) + i] = openness < CaveWalker.OpenAtLeast;
                 rockCells[(((k * sy) + j) * sx) + i] = openness <= 0f;
             }
@@ -505,6 +519,7 @@ internal sealed partial class DungeonModule
         }
 
         List<Vector3> points = [.. way.Cells.Select(c => new Vector3(c.X + x0 + 0.5f, c.Y + y0 + WalkAboveFloor, c.Z + z0 + 0.5f))];
+        walkerWay = new WalkerWay(x0, y0, z0, way, held);
         return (points, string.Create(CultureInfo.InvariantCulture,
             $"{Length(points):F0} m, {way.Drops} drops, {way.Climbs} climbs (pitches of at most {CaveWalker.ClimbPitch} m), {way.Expanded} cells searched"));
     }

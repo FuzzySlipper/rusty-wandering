@@ -24,6 +24,14 @@
 //   frame --out <file.png> [--overlays yes|no] [--width 1280] [--height 720]
 //                                        the frame the runtime draws now, with the inspection overlays it shows
 //                                        (craft.creature.labels): what an offline snapshot render cannot carry
+//   cavewalk --from <mouth> --to <mouth> [--resume <stall.json>] [--back 4] [--limit 600] [--stuck 25]
+//            [--out <dir>] [--world 19:390000]
+//                                        walk a planned cave system from one mouth to another on held input in
+//                                        real time, the product steering the view along the walker's way (#11219);
+//                                        a walk that makes no progress for --stuck seconds writes a stall record,
+//                                        the spot's report and its 3D dump to --out and exits 2 (#11226). With
+//                                        --resume it starts at the record's spot (--back metres before it)
+//                                        instead of the mouth, once the boxes and chunks there are resident
 //
 // Input goes through the Engine's harness lane (control/claim, runtime/input, control/release; see
 // the Engine's playtest-inspection guide): it reaches the product exactly as a page's key would,
@@ -255,6 +263,177 @@ async function discovery(argv) {
   if (failures.length > 0) throw new Error(failures.join('; '));
 }
 
+// --- cavewalk (#11219, #11226) ---------------------------------------------------------------------------------------
+
+const CAVEWALK_POLL_MS = 500;
+const CAVEWALK_SETUP_TIMEOUT_MS = 300000;
+const CAVEWALK_RESUME_TIMEOUT_MS = 120000;
+const CAVEWALK_RESTORE_WAIT_MS = 15000;
+// A walk stopped this long jumps as a player would at a lip, and still stopped after a jump, takes hold to climb.
+const CAVEWALK_STOPPED_MS = 1500;
+const CAVEWALK_PROGRESS_METRES = 0.3;
+const CAVEWALK_ARRIVED_METRES = 2;
+const CAVEWALK_TAP_MS = 150;
+
+/** Polls a debug command until its answer matches, or fails after the timeout with the last answer. */
+async function until(command, pattern, timeoutMs, pollMs = 2000) {
+  const started = Date.now();
+  let answer = '';
+  while (Date.now() - started < timeoutMs) {
+    answer = await exec(command);
+    if (pattern.test(answer)) return answer;
+    await sleep(pollMs);
+  }
+  throw new Error(`${command} did not answer ${pattern} in ${timeoutMs / 1000} s: ${answer.slice(0, 300)}`);
+}
+
+/** The golden-seed world, the planned system held and the way laid from one mouth to another; the player outside the entry. */
+async function caveSetup(world, from, to, beforeWay = async () => {}) {
+  const began = Date.now();
+  const phase = (name) => console.log(`  ${name} at ${((Date.now() - began) / 1000).toFixed(1)} s`);
+  const [seed, size] = world.split(':');
+  // A host just started may answer before its saved world is restored: give the restore a moment before making the world anew.
+  const wanted = new RegExp(`seed=${seed};size=${size}`);
+  const restored = await until('craft.world.map', wanted, CAVEWALK_RESTORE_WAIT_MS, CAVEWALK_POLL_MS).then(() => true, () => false);
+  if (!restored) {
+    await exec(`craft.world.create ${seed} ${size}`);
+    await until('craft.world.map', wanted, CAVEWALK_SETUP_TIMEOUT_MS);
+    phase('world created');
+  }
+  await exec('craft.world.view close');
+  await exec('craft.world.hour 11');
+  await exec(`craft.cave.plan goto:${from}`);
+  await until('craft.cave.plan status', /boxes=/, CAVEWALK_SETUP_TIMEOUT_MS, CAVEWALK_POLL_MS);
+  phase('system held');
+  console.log((await exec(`craft.cave.plan goto:${from}`)).slice(0, 200));
+  await beforeWay(phase);
+  const way = await until(`craft.cave.plan way:${from}:${to}`, /^way/, CAVEWALK_SETUP_TIMEOUT_MS, CAVEWALK_POLL_MS);
+  phase('way laid');
+  console.log(way);
+  return way;
+}
+
+/** Writes the stall record, the spot's report and its dump (the report and the dump read where the player stands). */
+async function writeStall(out, record) {
+  const { mkdirSync, writeFileSync } = await import('node:fs');
+  mkdirSync(out, { recursive: true });
+  const why = await exec('craft.cave.why here');
+  record.why = why;
+  writeFileSync(`${out}/stall.json`, JSON.stringify(record, null, 2));
+  writeFileSync(`${out}/why.txt`, why + '\n');
+  writeFileSync(`${out}/spot.json`, await exec('craft.cave.dump here'));
+  console.log(`stall record, report and dump in ${out}\n${why}`);
+}
+
+async function cavewalk(argv) {
+  const o = options(argv, { from: 4, to: 3, resume: '', back: 4, limit: 600, stuck: 25, out: '', world: '19:390000' });
+  const record = o.resume ? JSON.parse((await import('node:fs')).readFileSync(o.resume, 'utf8')) : null;
+  const [from, to] = record ? [record.from, record.to] : [o.from, o.to];
+  const started = Date.now();
+  // A resume asks for the stall's own box first (held at the spot while it generates, is admitted and dressed), and lays the
+  // way while the way's other boxes follow.
+  const atSpot = record?.feet && record?.heading !== undefined
+    ? async (phase) => {
+      await exec(`craft.cave.resume at:${record.feet.x},${record.feet.y},${record.feet.z},${record.heading}`);
+      let waiting = '';
+      await until('craft.cave.resume status', { test: (answer) => {
+        const now = answer.match(/waiting: ([^;]*)/)?.[1] ?? '';
+        if (now !== waiting) phase(`  waiting: ${(waiting = now) || 'nothing'}`);
+        return /ready=True/.test(answer);
+      } }, CAVEWALK_RESUME_TIMEOUT_MS, CAVEWALK_POLL_MS);
+      phase('at the stall');
+    }
+    : undefined;
+  await caveSetup(record?.world ?? o.world, from, to, atSpot);
+  if (record) {
+    const along = Math.max(0, record.along - o.back);
+    await exec(`craft.cave.resume along:${along}`);
+    console.log(await until('craft.cave.resume status', /ready=True/, CAVEWALK_RESUME_TIMEOUT_MS, CAVEWALK_POLL_MS));
+    console.log(`  resumed at ${((Date.now() - started) / 1000).toFixed(1)} s`);
+  }
+  console.log(`set up in ${((Date.now() - started) / 1000).toFixed(1)} s`);
+  const out = o.out || `authoring/assets/traversal-spots/M${from}-M${to}-${new Date().toISOString().replace(/[:.]/g, '-')}`;
+
+  const forward = JSON.parse(await exec('playtest.action walk-forward'));
+  const jump = JSON.parse(await exec('playtest.action jump'));
+  const climbKey = JSON.parse(await exec('playtest.action climb'));
+  if (!forward.available) throw new Error(`walk-forward: ${forward.reason}`);
+  console.log(await exec('craft.cave.steer in'));
+  const presentation = JSON.parse(await exec('engine.renderer.presentation'));
+  const claim = await post('/__rusty/product/runtime/control/claim', { runtime: presentation.runtime, label: 'craft-cave-walk', leaseMs: String((o.limit + 30) * 1000) });
+  let binding = claim.binding;
+  let sequence = BigInt(claim.nextInputSequence);
+  const send = async (code, edge) => {
+    const result = await post('/__rusty/product/runtime/input', { batch: [{ runtime: binding, sequence: String(sequence), context: INPUT_CONTEXT, fact: { kind: 'key', code, edge } }] });
+    sequence = result.nextInputSequence !== undefined ? BigInt(result.nextInputSequence) : sequence + 1n;
+    binding = result.binding ?? binding;
+  };
+  const tap = async (code) => {
+    await send(code, 'pressed');
+    await sleep(CAVEWALK_TAP_MS);
+    await send(code, 'released');
+  };
+  const walking = Date.now();
+  let lastProgress = -1e9, progressAt = Date.now(), stoppedSince = Date.now(), jumps = 0, climbs = 0, stuckJumps = 0, samples = 0;
+  let outcome = 'limit';
+  let last = {};
+  try {
+    await send(forward.key, 'pressed');
+    while ((Date.now() - walking) / 1000 < o.limit) {
+      await sleep(CAVEWALK_POLL_MS);
+      const readout = await exec('craft.cave.readout');
+      const [along, length] = (field(readout, 'along') ?? '0/0m').replace('m', '').split('/').map(Number);
+      const off = Number(readout.match(/off=([0-9.]+)m/)?.[1] ?? 0);
+      const seen = await observe();
+      last = { along, length, off, feet: seen.feet, heading: seen.yawDegrees, depth: field(readout, 'depth'), cave: field(readout, 'within') };
+      const line = `${((Date.now() - walking) / 1000).toFixed(1)}s along=${along.toFixed(1)}/${length}m off=${off.toFixed(1)}m depth=${last.depth} within=${last.cave} admitted=${field(readout, 'admitted')} dressed=${field(readout, 'dressed')}`;
+      if (samples++ % 4 === 0) console.log(line);
+      if (length > 0 && along >= length - CAVEWALK_ARRIVED_METRES) {
+        outcome = 'reached';
+        console.log(`reached: ${line}`);
+        break;
+      }
+
+      const progress = along - off;
+      if (Math.abs(progress - lastProgress) > CAVEWALK_PROGRESS_METRES) {
+        lastProgress = progress;
+        progressAt = stoppedSince = Date.now();
+        stuckJumps = 0;
+      } else if (Date.now() - progressAt > o.stuck * 1000) {
+        outcome = 'stalled';
+        console.log(`stalled: no progress for ${o.stuck} s: ${line}`);
+        break;
+      } else if (Date.now() - stoppedSince > CAVEWALK_STOPPED_MS) {
+        if (stuckJumps < 1) {
+          await tap(jump.key);
+          jumps++;
+          stuckJumps++;
+        } else {
+          await tap(climbKey.available ? climbKey.key : 'key-e');
+          climbs++;
+          stuckJumps = 0;
+        }
+        stoppedSince = Date.now();
+      }
+    }
+  } finally {
+    await send(forward.key, 'released');
+    await sleep(400);
+    await post('/__rusty/product/runtime/control/release', { runtime: binding });
+    await exec('craft.cave.steer off');
+  }
+
+  console.log(`walked ${((Date.now() - walking) / 1000).toFixed(1)} s: ${outcome}, jumps=${jumps}, climbs=${climbs}`);
+  if (outcome === 'stalled') {
+    await writeStall(out, {
+      kind: 'traversal-stall', version: 1, world: record?.world ?? o.world, from, to, along: last.along, wayLength: last.length, off: last.off,
+      feet: last.feet, heading: last.heading, depth: last.depth, box: last.cave, jumps, climbs, stuckSeconds: o.stuck, resumedFrom: o.resume || null,
+      at: new Date().toISOString(),
+    });
+    process.exitCode = 2;
+  }
+}
+
 const [command, ...rest] = process.argv.slice(2);
 const commands = {
   exec: async (argv) => console.log(await exec(argv.join(' '))),
@@ -262,6 +441,7 @@ const commands = {
   discovery,
   capture,
   frame,
+  cavewalk,
 };
 try {
   if (!(command in commands)) throw new Error(`usage: node scripts/live.mjs <${Object.keys(commands).join('|')}> [options]`);

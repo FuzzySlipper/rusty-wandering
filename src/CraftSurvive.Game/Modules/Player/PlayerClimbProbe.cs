@@ -149,6 +149,9 @@ internal sealed class PlayerClimbProbe(IEngineContext engine)
             $"face holdable={face.Holdable} top={face.TopHeight:F1}m topsOut={face.TopsOut} grip={face.Grip:F2} stop={face.Stop}; looks {looks}");
     }
 
+    /// <summary>Diagnostics (#11226): the block the climb rule reads at a global cell.</summary>
+    internal BlockId BlockAt(SpatialSession session, long x, long y, long z) => Material(session, x, y, z);
+
     private BlockId Material(SpatialSession session, long x, long y, long z)
     {
         VoxelReadout read = engine.Voxel.Read(new VoxelReadRequest(session, new VoxelAddress(x, y, z)));

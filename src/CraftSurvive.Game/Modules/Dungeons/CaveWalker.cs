@@ -392,6 +392,53 @@ internal sealed class CaveWalker
         return true;
     }
 
+    /// <summary>
+    /// Diagnostics (#11226): why a body stands at a cell or not, condition by condition (<see cref="Standing"/>): its two
+    /// cells open, rock under its feet that is more than a post, its head not pinched.
+    /// </summary>
+    internal string ExplainStanding(int x, int y, int z)
+    {
+        List<string> fails = [];
+        if (Solid(x, y, z)) fails.Add("feet cell solid");
+        if (Solid(x, y + 1, z)) fails.Add("head cell solid");
+        if (!Solid(x, y - 1, z)) fails.Add("no floor under");
+        else if (!Broad(x, y - 1, z)) fails.Add("floor a lone post");
+        if (Pinch(x, y + 1, z) is (int, int, int) p) fails.Add($"head pinched at {p}");
+        return fails.Count == 0 ? "stands" : string.Join(", ", fails);
+    }
+
+    /// <summary>
+    /// Diagnostics (#11226): each condition of a climb from a standing cell along (dx, dz) onto the ledge h cells up, as
+    /// <see cref="Reach"/> takes it with no edits: rock at the face's foot, rock a climb holds from a cell over the feet to
+    /// under the ledge, the climber's own column clear to its head at the top, a body standing on the ledge with room to step on.
+    /// Null where every condition holds, else what fails.
+    /// </summary>
+    internal string? ExplainClimb((int X, int Y, int Z) at, int dx, int dz, int h)
+    {
+        int nx = at.X + dx, nz = at.Z + dz;
+        List<string> fails = [];
+        if (!Solid(nx, at.Y, nz)) fails.Add("no face at the feet");
+        for (int k = 1; k < h; k++)
+        {
+            if (!Solid(nx, at.Y + k, nz)) fails.Add($"face open {k} m up");
+            else if (!Rock(nx, at.Y + k, nz)) fails.Add($"face barely open (not rock) {k} m up");
+        }
+
+        for (int c = at.Y + BodyCells; c <= at.Y + h + 1; c++)
+        {
+            if (Solid(at.X, c, at.Z)) fails.Add($"climber's column blocked {c - at.Y} m up");
+        }
+
+        string ledge = ExplainStanding(nx, at.Y + h, nz);
+        if (ledge != "stands") fails.Add("ledge: " + ledge);
+        foreach ((int lx, int ly, int lz) in LandingCells(nx, at.Y + h, nz, dx, dz))
+        {
+            if (Solid(lx, ly, lz)) fails.Add($"landing cell ({lx},{ly},{lz}) solid");
+        }
+
+        return fails.Count == 0 ? null : string.Join(", ", fails);
+    }
+
     /// <summary>Every standing cell a body reaches from one, walking, stepping, dropping and climbing, with no edits.</summary>
     internal HashSet<(int X, int Y, int Z)> Reach((int X, int Y, int Z) start, int most = MostExpanded)
     {

@@ -150,6 +150,15 @@ internal sealed class TerrainWorld : IDisposable
 
     private Action<List<StaticMeshAsset>, List<Vector3>, List<Triangle>, List<StaticMeshInstance>>? caveCollision;
 
+    /// <summary>The walking session's static collision as handed to the Engine: instance transforms in the session's frame then.</summary>
+    internal sealed record StaticCollision(StaticMeshAsset[] Assets, Vector3[] Vertices, Triangle[] Triangles, StaticMeshInstance[] Instances);
+
+    /// <summary>
+    /// The static collision last composed (#11226: the traversal report reads the pieces about a point from it). The arrays are
+    /// the ones the Engine copied; it is recomposed whenever the world's origin moves, so its transforms follow the current frame.
+    /// </summary>
+    internal StaticCollision? LastStaticCollision { get; private set; }
+
     /// <summary>Whether the open world's far reaches (far ground, trees, ground cover and plants) are drawn: not deep in a cave.</summary>
     private bool deepHidden;
     private bool awayHidden;
@@ -723,7 +732,9 @@ internal sealed class TerrainWorld : IDisposable
             }
         }
 
-        CollisionReplaceRequest replacing = new(Session, assets.ToArray(), vertices.ToArray(), triangles.ToArray(), instances.ToArray());
+        StaticCollision composed = new([.. assets], [.. vertices], [.. triangles], [.. instances]);
+        LastStaticCollision = composed;
+        CollisionReplaceRequest replacing = new(Session, composed.Assets, composed.Vertices, composed.Triangles, composed.Instances);
         // The Engine builds the walking session's one static collision on this thread (#10907): counted as its share.
         long replaced = System.Diagnostics.Stopwatch.GetTimestamp();
         engine.Spatial.ReplaceCollision(replacing);
