@@ -487,10 +487,13 @@ internal sealed class DungeonKitLook : IDisposable
         Func<Transform, Transform> place)
     {
         List<KitPiece> kinds = [.. placed.Where(p => DungeonKit.Collides(p.Piece)).Select(p => DungeonKit.Collider(p.Piece)).Distinct()];
+        // Numbered after what the composition already holds, so several kits (a planned system's dressed boxes, #11219) never
+        // name one id twice: which geometry the Engine keeps for a shared id is not the product's to choose (#11226).
+        ulong assetFirst = AssetBase + (ulong)assets.Count, instanceFirst = InstanceBase + (ulong)instances.Count;
         // A piece with a collider collides as its triangles, given inline; one without, as its drawn mesh.
         foreach (KitPiece kind in kinds)
         {
-            ulong id = AssetBase + (ulong)kinds.IndexOf(kind);
+            ulong id = assetFirst + (ulong)kinds.IndexOf(kind);
             if (colliders.TryGetValue(kind, out (Vector3[] Vertices, Triangle[] Triangles) collider))
             {
                 uint firstVertex = (uint)vertices.Count, firstTriangle = (uint)triangles.Count;
@@ -505,7 +508,7 @@ internal sealed class DungeonKitLook : IDisposable
         }
 
         instances.AddRange(placed.Where(p => DungeonKit.Collides(p.Piece))
-            .Select((p, i) => new StaticMeshInstance(InstanceBase + (ulong)i, AssetBase + (ulong)kinds.IndexOf(DungeonKit.Collider(p.Piece)), place(p.Place))));
+            .Select((p, i) => new StaticMeshInstance(instanceFirst + (ulong)i, assetFirst + (ulong)kinds.IndexOf(DungeonKit.Collider(p.Piece)), place(p.Place))));
     }
 
     /// <summary>Disposes the pieces after the snapshot that last named them, then their materials.</summary>
