@@ -17,7 +17,7 @@ if (args is ["walkers", string walkerCount, ..])
     int count = int.Parse(walkerCount, System.Globalization.CultureInfo.InvariantCulture);
     bool carve = !args.Contains("nocarve");
     System.Numerics.Vector2 UnderWayIn = new(12.5f, 48.5f);
-    const int RoutePointEvery = 16, UnderBoxChunksX = 6, UnderBoxChunksY = 4, UnderBoxChunksZ = 6, UnderSinkBelowTop = 5;
+    const int RoutePointEvery = 16, UnderBoxChunksX = 6, UnderBoxChunksY = 4, UnderBoxChunksZ = 6;
     int there = 0, back = 0, both = 0, settled = 0, routePoints = 0, routeReached = 0, routeLeft = 0, everyPoint = 0;
     long chambers = 0, rifts = 0, formations = 0, conduits = 0, waterfalls = 0, communities = 0, overgrowth = 0, ecology = 0, openCells = 0, dug = 0, floored = 0, touchDug = 0, touchFloored = 0, drops = 0, climbs = 0, highestPitch = 0;
     double generateMs = 0;
@@ -70,11 +70,12 @@ if (args is ["walkers", string walkerCount, ..])
 
         touchDug += generated.Report.WalkerTouchUp.Dug;
         touchFloored += generated.Report.WalkerTouchUp.Floored;
-        if (layout.MainRoute.Count < 2) continue;
-        // From the way in, where a body comes down the sink (the first sink under the box's roof), as the carve starts; to the spring.
-        System.Numerics.Vector3 b = layout.MainRoute[^1];
-        (int, int, int)? from = walker.Settle((int)UnderWayIn.X, sy - UnderSinkBelowTop, (int)UnderWayIn.Y, across: 3, down: 12);
-        (int, int, int)? to = walker.Settle((int)b.X, (int)b.Y, (int)b.Z, across: 3, down: 12);
+        if (layout.MainRoute.Count < 2 || generated.Report.Shape is not KarstCave.Features ends || ends.Sinks.Length == 0) continue;
+        // The required route's own ends, settled as the carve settles them (KarstCave.WalkerCarve): the way in, where a body
+        // comes down the first sink, and the spring.
+        KarstCave.WalkerLeg? springLeg = generated.Report.WalkerLegs.FirstOrDefault(l => l.Route == "spring" && !l.Back);
+        System.Numerics.Vector3 a = springLeg?.FromPoint ?? ends.Sinks[0], b = springLeg?.ToPoint ?? ends.Spring;
+        (int, int, int)? from = KarstCave.SettledEnd(walker, a), to = KarstCave.SettledEnd(walker, b);
         if (from is not (int, int, int) f || to is not (int, int, int) t)
         {
             Console.WriteLine($"seed {seed:x}: no floor at {(from is null ? "the way in" : "the spring")}");
@@ -83,11 +84,21 @@ if (args is ["walkers", string walkerCount, ..])
 
         settled++;
         CaveWalker.Way? down = walker.Find(f, t, edits: false), up = walker.Find(t, f, edits: false);
+        if (args.Contains("legs"))
+        {
+            Console.WriteLine($"  ends: way in {f}, spring {t}");
+            foreach (KarstCave.WalkerLeg leg in generated.Report.WalkerLegs.Where(l => l.Found))
+            {
+                Console.WriteLine($"  leg {leg.Route} back={leg.Back} {leg.From}->{leg.To} walks on the finished shape: {walker.Find(leg.From, leg.To, edits: false) is not null}");
+            }
+        }
+
         if (down is not null) { there++; drops += down.Drops; climbs += down.Climbs; highestPitch = Math.Max(highestPitch, HighestPitch(down)); }
         if (up is not null) { back++; highestPitch = Math.Max(highestPitch, HighestPitch(up)); }
         if (down is not null && up is not null) both++;
 
-        // Every main-route point (one each ~8 m): reached from the way in, and left again - back to the way in or on to the spring.
+        // Every main-route point (one each ~8 m): reached from the way in, and left again - back to the way in, or on to the
+        // spring only where the spring itself walks back to the way in (a spring with no way back is no escape).
         HashSet<(int X, int Y, int Z)> fromWayIn = walker.Reach(f);
         bool all = true;
         int points = 0, reached = 0, left = 0;
@@ -98,7 +109,7 @@ if (args is ["walkers", string walkerCount, ..])
             points++;
             bool isReached = fromWayIn.Contains(at);
             HashSet<(int X, int Y, int Z)> onward = walker.Reach(at);
-            bool isLeft = onward.Any(c => Near(c, f) || Near(c, t));
+            bool isLeft = onward.Any(c => Near(c, f) || (up is not null && Near(c, t)));
             reached += isReached ? 1 : 0;
             left += isLeft ? 1 : 0;
             all &= isReached && isLeft;

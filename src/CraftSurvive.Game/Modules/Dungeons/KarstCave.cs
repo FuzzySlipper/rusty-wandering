@@ -6329,7 +6329,7 @@ private static int MostBarrensPieces => Area(400);
     /// Found is false only where no way was found even with edits.
     /// </summary>
     internal sealed record WalkerLeg(string Route, bool Back, bool Found, int Cells, int Drops, int Climbs, int Dug, int Floored, int Expanded,
-        (int X, int Y, int Z) From, (int X, int Y, int Z) To);
+        (int X, int Y, int Z) From, (int X, int Y, int Z) To, Vector3 FromPoint, Vector3 ToPoint);
 
     /// <summary>
     /// The walker carve (#10908): on the cave's 1 m cells, between each required route's ends (the way in, the spring and the
@@ -6388,7 +6388,7 @@ private static int MostBarrensPieces => Area(400);
 
         List<WalkerLeg> legs = [];
         HashSet<(int, int, int)> walked = [];
-        List<(string Name, bool Back, CaveWalker.Way Way)> ways = [];
+        List<(string Name, bool Back, CaveWalker.Way Way, Vector3 FromPoint, Vector3 ToPoint)> ways = [];
         foreach ((string name, Vector3 from, Vector3 to) in routes)
         {
             if (name != "spring" && !name.StartsWith("port:", StringComparison.Ordinal)) continue;
@@ -6398,7 +6398,7 @@ private static int MostBarrensPieces => Area(400);
                 CaveWalker.Way? way = walker.Find(back ? b : a, back ? a : b, edits: true);
                 if (way is null)
                 {
-                    legs.Add(new WalkerLeg(name, back, false, 0, 0, 0, 0, 0, 0, back ? b : a, back ? a : b));
+                    legs.Add(new WalkerLeg(name, back, false, 0, 0, 0, 0, 0, 0, back ? b : a, back ? a : b, back ? to : from, back ? from : to));
                     continue;
                 }
 
@@ -6406,7 +6406,7 @@ private static int MostBarrensPieces => Area(400);
                 foreach ((int x, int y, int z) in way.Dug) SetCell(open, x, y, z, WalkerEditMagnitude);
                 foreach ((int x, int y, int z) in way.Floored) SetCell(open, x, y, z, -WalkerEditMagnitude);
                 foreach ((int, int, int) cell in way.Cells) walked.Add(cell);
-                ways.Add((name, back, way));
+                ways.Add((name, back, way, back ? to : from, back ? from : to));
             }
         }
 
@@ -6415,12 +6415,12 @@ private static int MostBarrensPieces => Area(400);
         HashSet<(int, int)> columns = [.. walked.Select(c => (c.Item1, c.Item3))];
         bool KeepOpen(int x, int z) => columns.Contains((x, z)) || ports.Any(p => p.Vertical
             && ((x + 0.5f - p.U) * (x + 0.5f - p.U)) + ((z + 0.5f - p.V) * (z + 0.5f - p.V)) <= MathF.Pow(MathF.Max(p.Radius, PortMinRadius) + 1.5f, 2));
-        foreach ((string name, bool back, CaveWalker.Way way) in ways)
+        foreach ((string name, bool back, CaveWalker.Way way, Vector3 fromPoint, Vector3 toPoint) in ways)
         {
             List<(int X, int Y, int Z)> guards = walker.Guards(way, KeepOpen);
             walker.Floor(guards);
             foreach ((int x, int y, int z) in guards) SetCell(open, x, y, z, -WalkerEditMagnitude);
-            legs.Add(new WalkerLeg(name, back, true, way.Cells.Count, way.Drops, way.Climbs, way.Dug.Count, way.Floored.Count + guards.Count, way.Expanded, way.Cells[0], way.Cells[^1]));
+            legs.Add(new WalkerLeg(name, back, true, way.Cells.Count, way.Drops, way.Climbs, way.Dug.Count, way.Floored.Count + guards.Count, way.Expanded, way.Cells[0], way.Cells[^1], fromPoint, toPoint));
         }
 
         return (legs, [.. walked.Select(c => new Vector3(c.Item1 + 0.5f, c.Item2 + 0.5f, c.Item3 + 0.5f))]);
@@ -6467,10 +6467,10 @@ private static int MostBarrensPieces => Area(400);
         for (int round = 0; round < WalkerTouchUpRounds; round++)
         {
             bool mended = false;
-            foreach (WalkerLeg leg in legs.Where(l => l.Found))
+            foreach (((int, int, int) from, (int, int, int) to) in MendEnds(walker, legs))
             {
-                if (walker.Find(leg.From, leg.To, edits: false) is not null
-                    || walker.Find(leg.From, leg.To, edits: true) is not CaveWalker.Way way)
+                if (walker.Find(from, to, edits: false) is not null
+                    || walker.Find(from, to, edits: true) is not CaveWalker.Way way)
                 {
                     continue;
                 }
@@ -6484,6 +6484,28 @@ private static int MostBarrensPieces => Area(400);
             if (!mended) break;
         }
     }
+
+    /// <summary>
+    /// The ends the touch-up keeps walkable (#10908 R10908-3): each leg's own, and for the spring route (whose ends are points,
+    /// not ports) the same points settled on the finished shape as anyone standing there finds them, since the finished shape
+    /// may settle them a cell from the carve's: a pocket beside the leg's end would be a spring reached and never left.
+    /// </summary>
+    private static IEnumerable<((int X, int Y, int Z) From, (int X, int Y, int Z) To)> MendEnds(CaveWalker walker, IReadOnlyList<WalkerLeg> legs)
+    {
+        foreach (WalkerLeg leg in legs.Where(l => l.Found))
+        {
+            yield return (leg.From, leg.To);
+            if (leg.Route == "spring" && SettledEnd(walker, leg.FromPoint) is (int, int, int) from && SettledEnd(walker, leg.ToPoint) is (int, int, int) to
+                && (from != leg.From || to != leg.To))
+            {
+                yield return (from, to);
+            }
+        }
+    }
+
+    /// <summary>Where a route's end point stands on a walker's cells: the floor under it, as the carve finds it.</summary>
+    internal static (int X, int Y, int Z)? SettledEnd(CaveWalker walker, Vector3 at) =>
+        walker.Settle((int)MathF.Floor(at.X), (int)MathF.Floor(at.Y), (int)MathF.Floor(at.Z), across: 3, down: 12);
 
     /// <summary>
     /// The touch-up's walking corridors (#10908): along each leg's straight walked stretches, the cells either side of the way
