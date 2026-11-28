@@ -13,6 +13,7 @@ import type {
   UndergroundSystemSummary,
 } from '../types';
 import { AtlasView, DETAIL_METRES_PER_PIXEL, PLACE_COLOURS, crossingOf, placeOf, tileAt, type AtlasToggles, type Camera, type Pick } from '../atlas/AtlasView';
+import { placeCellOf } from '../atlas/placeKeys';
 import { BASE_MODES, loadContinent, paintContinent, paintWindow, sampleAt, type BaseMode, type ContinentRaster, type Legend } from '../atlas/layers';
 import { Empty, FactList, JsonView } from '../components/ui';
 import { ReviewPanel } from '../components/ReviewControls';
@@ -340,7 +341,9 @@ export function AtlasPage({ initialRef }: { initialRef?: string }) {
     }
     if (ref.startsWith('poi:') || ref.startsWith('crossing:')) {
       const [, cx, cz] = ref.split(':').map(Number);
-      const [tx, tz] = tileAt(cx * world!.placeCell, cz * world!.placeCell, spacing);
+      // A further plan mouth's key carries its index (#11220): its tile is its physical cell's; its row matches the key.
+      const cellX = ref.startsWith('poi:') ? placeCellOf(cx).cellX : cx;
+      const [tx, tz] = tileAt(cellX * world!.placeCell, cz * world!.placeCell, spacing);
       const tile = await loadTile(tx, tz);
       if (!tile) return null;
       if (ref.startsWith('poi:')) {
