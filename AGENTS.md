@@ -128,6 +128,13 @@ Read the packaged SDK's C# guidance when changing the product/Engine boundary.
 - CI is `scripts/check-product.sh --managed` (verify workflow, on den-k8's
   self-hosted runner); run it locally to reproduce a CI failure or to check a
   commit before pushing.
+- Keep proof proportionate to the stage. Runs of an hour or more (repeated
+  live walks, long captures or sweeps) are for closing a major milestone, not
+  for work in progress. If a run keeps failing at the same place, stop
+  re-running it from the start. Teleport there (`craft.player.teleport`,
+  `craft.cave.goto`) and read the spot directly (`craft.player.climbprobe`,
+  `craft.cave.profile`, `craft.cave.slice`, `craft.cave.voxel`). A full walk
+  proves streaming; a locomotion or geometry fault shows faster up close.
 - Preserve unrelated work. In particular, `content/animations/` and
   `content/voxels/` are user-owned assets in the working checkout: never
   modify, stage, or clean them.
