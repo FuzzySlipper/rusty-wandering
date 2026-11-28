@@ -319,10 +319,28 @@ async function writeStall(out, record) {
   mkdirSync(out, { recursive: true });
   const why = await exec('craft.cave.why here');
   record.why = why;
+  // The way itself (steering points, the walker's cells and moves) and the walker's expectation at the stall: a resume lays
+  // the way again and compares it with this one.
+  const way = JSON.parse(await exec('craft.cave.way here'));
+  record.expected = way.expected ?? null;
+  record.way = { length: way.length, steering: way.steering, walker: way.walker ?? null };
   writeFileSync(`${out}/stall.json`, JSON.stringify(record, null, 2));
   writeFileSync(`${out}/why.txt`, why + '\n');
   writeFileSync(`${out}/spot.json`, await exec('craft.cave.dump here'));
   console.log(`stall record, report and dump in ${out}\n${why}`);
+}
+
+/** Whether a way laid now is the one a stall record holds: the walker's cells and moves, and the steering points. */
+function sameWay(recorded, now) {
+  if (!recorded) return { same: false, why: 'the record holds no way (recorded before #11226 kept it)' };
+  const cells = (w) => JSON.stringify(w?.walker?.cells ?? []);
+  if (cells(recorded) !== cells(now)) {
+    const a = recorded.walker?.cells ?? [], b = now.walker?.cells ?? [];
+    const first = a.findIndex((c, i) => JSON.stringify(c) !== JSON.stringify(b[i]));
+    return { same: false, why: `walker cells ${a.length} then, ${b.length} now, first differing at ${first < 0 ? Math.min(a.length, b.length) : first}` };
+  }
+  if (JSON.stringify(recorded.steering) !== JSON.stringify(now.steering)) return { same: false, why: `steering way ${recorded.length} m then, ${now.length} m now` };
+  return { same: true };
 }
 
 async function cavewalk(argv) {
@@ -346,10 +364,23 @@ async function cavewalk(argv) {
     : undefined;
   await caveSetup(record?.world ?? o.world, from, to, atSpot);
   if (record) {
+    // The way laid now against the record's: the same walker cells and steering points mean `along` is the same place.
+    const now = JSON.parse(await exec('craft.cave.way -'));
+    const same = sameWay(record.way, now);
+    console.log(`  the way laid now ${same.same ? 'matches the record' : `differs from the record: ${same.why}`}`);
     const along = Math.max(0, record.along - o.back);
-    await exec(`craft.cave.resume along:${along}`);
+    if (!same.same && !record.feet) throw new Error('the way differs from the record and the record has no feet to resume at');
+    await exec(same.same ? `craft.cave.resume along:${along}` : `craft.cave.resume at:${record.feet.x},${record.feet.y},${record.feet.z},${record.heading}`);
     console.log(await until('craft.cave.resume status', /ready=True/, CAVEWALK_RESUME_TIMEOUT_MS, CAVEWALK_POLL_MS));
     console.log(`  resumed at ${((Date.now() - started) / 1000).toFixed(1)} s`);
+    if (record.expected && record.feet) {
+      // The walker's expectation at the recorded stall, read again on the way laid now.
+      const now = JSON.parse(await exec(`craft.cave.way ${record.feet.x},${record.feet.y},${record.feet.z},${record.heading}`)).expected;
+      const was = record.expected;
+      const describe = (e) => e ? `cell ${e.cell} ${e.move}, next ${e.nextMove ?? '-'} ${e.nextRise ?? ''}${e.climb ? `, climb ${e.climb.pitch} m at cell ${e.climb.cell}` : ''}` : 'none';
+      const agree = JSON.stringify(was.climb ?? null) === JSON.stringify(now?.climb ?? null) && was.cell === now?.cell;
+      console.log(`  the walker's expectation at the stall: recorded ${describe(was)}; now ${describe(now)}${agree ? ' (the same)' : ' - DIFFERENT'}`);
+    }
   }
   console.log(`set up in ${((Date.now() - started) / 1000).toFixed(1)} s`);
   const out = o.out || `authoring/assets/traversal-spots/M${from}-M${to}-${new Date().toISOString().replace(/[:.]/g, '-')}`;

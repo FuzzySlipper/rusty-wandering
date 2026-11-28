@@ -189,11 +189,15 @@ node scripts/live.mjs cavewalk --resume <dir>/stall.json --back 4    # again fro
   player would.
 - A walk that makes no progress for `--stuck` seconds (default 25) gives up. It writes three files to `--out`
   (default `authoring/assets/traversal-spots/M<from>-M<to>-<time>/`, ignored), then exits with 2:
-  - `stall.json`: the way, the distance along it, the feet and heading, and the jumps and climbs tried;
+  - `stall.json`: the distance along the way, the feet and heading, the jumps and climbs tried, the way itself
+    (`craft.cave.way`: the steering points, the walker's cells and moves) and the walker's expectation at the stall
+    (its cell, move, standing cell, next climb's foot, ledge, axis and pitch);
   - `why.txt`: the report below;
   - `spot.json`: the 3D dump.
 - `--resume <stall.json>` asks for the stall's own box first and holds the player at the spot until it is ready.
-  It then lays the way, places the player `--back` metres before the spot and walks on. On a host with the world
+  It then lays the way again and compares it with the record's: where the walker's cells and the steering points
+  match, it places the player `--back` metres before the spot along it; where they differ, it says how and resumes at
+  the record's feet. It prints the walker's expectation at the stall then and now, and walks on. On a host with the world
   already restored but no cave asked for, the stall reproduces within a minute; a retry on a warm host takes about
   20 s, most of it re-laying the walker's way.
 - The CMS's **Traversal spots** page (`python3 authoring/tools/cms/server.py`) lists the recorded spots with their
@@ -227,12 +231,16 @@ feet in world metres, degrees with 0 facing -z):
   It ends with a verdict: steering, model (the walker's rules and the controller's disagree) or shape. It takes about
   a second.
 - `craft.cave.dump <spot>` is the same spot as JSON, the CMS's `spot.json`.
+- `craft.cave.way <spot | ->` is the laid way as JSON with the walker's expectation at a spot: the stall record's way.
 - `craft.cave.plan goto:box:<box>` stands the player on the floor of any box of the held planned system, through the
   same hold. `craft.cave.voxel x,y,z` reads a voxel in any ready box (planned or landmark), with the Engine's block and
   residency. `craft.cave.profile <from>-<to>` follows a planned system's laid way too.
 - The report reads the collision through rays and capsule overlaps, and the static pieces from the product's own
-  composition (`TerrainWorld.LastStaticCollision`). The SDK does not hand back the Engine's voxel collision triangles,
-  so the voxel surface in the dump is the ray lattice's hits, not the mesh itself.
+  composition (`TerrainWorld.LastStaticCollision`). **The voxel collision mesh is not in the dump:** the SDK has no
+  readout of the Engine's voxel collision triangles. The upstream capability it needs is a bounded collision-geometry
+  readout on `ISpatialService` (a session and a box in, the resident collision triangles in it out, each with its
+  source: voxel chunk and its address, or static instance and asset). Until that exists, or Patch accepts the
+  stand-in, the dump's voxel surface is the ray lattice's hits, a sample that keeps no triangle connectivity.
 
 **Spawning, inspecting and overriding one creature (#10926).**
 

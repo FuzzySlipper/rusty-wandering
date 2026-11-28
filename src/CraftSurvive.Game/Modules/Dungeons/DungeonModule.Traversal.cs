@@ -41,6 +41,9 @@ internal sealed partial class DungeonModule
     /// <summary>How far off the expected stand, and how far off its heading, the player may be before steering is suspected.</summary>
     private const float SteerOffMetres = 0.75f, SteerOffDegrees = 30f;
 
+    /// <summary>A spot this near the player's feet is where the player stands: the player's own facts judge its steering.</summary>
+    private const float SpotIsPlayerMetres = 2f;
+
     /// <summary>A contact deeper than this into the capsule counts as overlapping.</summary>
     private const double OverlapDepth = 0.01d;
 
@@ -269,17 +272,24 @@ internal sealed partial class DungeonModule
         internal int Index(int i, int j, int k) => (((k * Size) + j) * Size) + i;
 
         internal (int, int, int) Cell(long x, long y, long z) => ((int)(x - X0), (int)(y - Y0), (int)(z - Z0));
+
+        /// <summary>Whether a world cell lies in the cells read, at least <paramref name="margin"/> cells inside their faces.</summary>
+        internal bool Holds(long x, long y, long z, int margin = 0) =>
+            x - X0 >= margin && y - Y0 >= margin && z - Z0 >= margin && x - X0 < Size - margin && y - Y0 < Size - margin && z - Z0 < Size - margin;
+
+        /// <summary>A world cell's index in the cells read, or null where it lies outside them.</summary>
+        internal int? At(long x, long y, long z) => Holds(x, y, z) ? Index((int)(x - X0), (int)(y - Y0), (int)(z - Z0)) : null;
     }
 
     /// <summary>Reads the cells about a spot (the walker's measure from the ready boxes and tendrils, the terrain's and the Engine's voxels).</summary>
-    private SpotCells ReadCells(Vector3 feet)
+    private SpotCells ReadCells(Vector3 feet, PlannedHeld? system = null)
     {
         int size = (SpotRadiusCells * 2) + 1;
         long x0 = (long)MathF.Floor(feet.X) - SpotRadiusCells, y0 = (long)MathF.Floor(feet.Y) - SpotRadiusCells, z0 = (long)MathF.Floor(feet.Z) - SpotRadiusCells;
         float[] openness = new float[size * size * size];
         ushort[] terrainCells = new ushort[openness.Length], engineCells = new ushort[openness.Length];
         bool[] solid = new bool[openness.Length], rock = new bool[openness.Length];
-        PlannedHeld? held = plannedHeld.Values.FirstOrDefault(h => h.Boxes.Any(b => b.InBox((long)MathF.Floor(feet.X), (long)MathF.Floor(feet.Y), (long)MathF.Floor(feet.Z), out _, out _, out _)));
+        PlannedHeld? held = system ?? plannedHeld.Values.FirstOrDefault(h => h.Boxes.Any(b => b.InBox((long)MathF.Floor(feet.X), (long)MathF.Floor(feet.Y), (long)MathF.Floor(feet.Z), out _, out _, out _)));
         (CavePlacement Box, CaveInterior Interior)[] boxes = held is null ? [] : [.. held.Boxes
             .Select(b => underCaves.TryGetValue(b.Key, out UnderCave? c) && c.Ready is UndergroundCave r ? (b, r.Interior) : (b, null!))
             .Where(p => p.Interior is not null)];
@@ -359,13 +369,8 @@ internal sealed partial class DungeonModule
         if (walkerWay is WalkerWay ww && plannedWay)
         {
             IReadOnlyList<(int X, int Y, int Z)> wc = ww.Way.Cells;
-            Vector3 FeetOf(int i) => new(wc[i].X + ww.X0 + 0.5f, wc[i].Y + ww.Y0, wc[i].Z + ww.Z0 + 0.5f);
-            int best = 0;
-            for (int i = 1; i < wc.Count; i++)
-            {
-                if (Vector3.DistanceSquared(FeetOf(i), feet) < Vector3.DistanceSquared(FeetOf(best), feet)) best = i;
-            }
-
+            Vector3 FeetOf(int i) => WalkerFeet(ww, i);
+            (int best, climb) = Expect(ww, feet);
             nearest = best;
             StringBuilder moves = new();
             for (int i = Math.Max(0, best - SpotMovesBefore); i <= Math.Min(wc.Count - 1, best + SpotMovesAfter); i++)
@@ -421,14 +426,6 @@ internal sealed partial class DungeonModule
                     $"the player's feet are {below:F2} m under the walker's floor at its nearest cell: the controller stands where the walker sees no standing room"));
                 verdict ??= "model: the controller walks under the walker's floor, in cells the walker counts solid that the collision leaves open";
             }
-            for (int i = Math.Max(1, best - 1); i < Math.Min(wc.Count, best + SpotClimbAhead); i++)
-            {
-                if (ww.Way.Moves[i] != CaveWalker.Move.Climb) continue;
-                (long X, long Y, long Z) foot = (wc[i - 1].X + ww.X0, wc[i - 1].Y + ww.Y0, wc[i - 1].Z + ww.Z0);
-                (long X, long Y, long Z) ledge = (wc[i].X + ww.X0, wc[i].Y + ww.Y0, wc[i].Z + ww.Z0);
-                climb = new ExpectedClimb(foot, ledge, (int)(ledge.X - foot.X), (int)(ledge.Z - foot.Z), (int)(ledge.Y - foot.Y), i);
-                break;
-            }
         }
         else
         {
@@ -450,33 +447,46 @@ internal sealed partial class DungeonModule
             float axisHeading = (float)(Math.Atan2(c.Dx, -c.Dz) * 180d / Math.PI);
             Line(string.Create(CultureInfo.InvariantCulture,
                 $"walker climb (way cell {c.Index}): from foot cell {c.Foot} up {c.Pitch} m onto ledge cell {c.Ledge}, along ({c.Dx},{c.Dz}) = heading {axisHeading:F0}; the face is column ({c.Foot.X + c.Dx},{c.Foot.Z + c.Dz})"));
-            (int ai, int aj, int ak) = cells.Cell(c.Foot.X, c.Foot.Y, c.Foot.Z);
-            bool inside = c.Ledge.Y - cells.Y0 + 2 < cells.Size && ai >= 1 && ak >= 1 && ai < cells.Size - 1 && ak < cells.Size - 1;
-            string? walkerFails = inside ? cells.Walker.ExplainClimb((ai, aj, ak), c.Dx, c.Dz, c.Pitch) : "outside the cells read";
-            Line($"walker rule re-read here: {walkerFails ?? "the climb holds (every condition)"}; foot {cells.Walker.ExplainStanding(ai, aj, ak)}");
-            if (walkerFails is not null)
+            // The climb may lie up to SpotClimbAhead cells on, past the cells read about the spot: its own cells are read about
+            // it then (the foot a cell under to the ledge's head over it, and a cell round the face and the landing).
+            SpotCells climbCells = ClimbCovered(cells, c) ? cells
+                : ReadCells(new Vector3(c.Foot.X + 0.5f, c.Foot.Y + (c.Pitch / 2f), c.Foot.Z + 0.5f), walkerWay?.Held);
+            if (!ClimbCovered(climbCells, c))
             {
-                disagree.Add($"the walker's way climbs here, but its own rule on the cells now says: {walkerFails}");
-                verdict ??= "shape: the cells the walker climbs here differ from the ones it found its way on";
+                Line("walker rule re-read here: the climb does not fit in the cells read; not compared");
+            }
+            else
+            {
+                (int ai, int aj, int ak) = climbCells.Cell(c.Foot.X, c.Foot.Y, c.Foot.Z);
+                string? walkerFails = climbCells.Walker.ExplainClimb((ai, aj, ak), c.Dx, c.Dz, c.Pitch);
+                Line($"walker rule re-read here{(climbCells == cells ? "" : " (cells read about the climb)")}: {walkerFails ?? "the climb holds (every condition)"}; foot {climbCells.Walker.ExplainStanding(ai, aj, ak)}");
+                if (walkerFails is not null)
+                {
+                    disagree.Add($"the walker's way climbs here, but its own rule on the cells now says: {walkerFails}");
+                    verdict ??= "shape: the cells the walker climbs here differ from the ones it found its way on";
+                }
             }
 
             // The face column as the walker, the terrain and the Engine hold it.
             StringBuilder column = new("face column (walker/terrain/engine, from the foot up): ");
             for (int h = 0; h <= c.Pitch + 1; h++)
             {
-                (int i, int j, int k) = cells.Cell(c.Foot.X + c.Dx, c.Foot.Y + h, c.Foot.Z + c.Dz);
-                if (j >= cells.Size) break;
-                int at = cells.Index(i, j, k);
-                float o = cells.Openness[at];
-                string w = o <= 0f ? "rock" : o < CaveWalker.OpenAtLeast ? "barely" : "open";
-                column.Append(CultureInfo.InvariantCulture, $"{h}:{w}/{(BlockId)cells.Terrain[at]}/{(BlockId)cells.Engine[at]} ");
-                if (Collides(cells.Terrain[at]) != Collides(cells.Engine[at]))
+                if (climbCells.At(c.Foot.X + c.Dx, c.Foot.Y + h, c.Foot.Z + c.Dz) is not int at)
                 {
-                    disagree.Add($"the terrain and the Engine disagree on the face {h} m up ({(BlockId)cells.Terrain[at]} vs {(BlockId)cells.Engine[at]}): a stale chunk");
+                    column.Append(CultureInfo.InvariantCulture, $"{h}:unread ");
+                    continue;
                 }
-                else if (h >= 1 && h < c.Pitch && o <= 0f && !BlockRegistry.Get((BlockId)cells.Engine[at]).Climbable)
+
+                float o = climbCells.Openness[at];
+                string w = o <= 0f ? "rock" : o < CaveWalker.OpenAtLeast ? "barely" : "open";
+                column.Append(CultureInfo.InvariantCulture, $"{h}:{w}/{(BlockId)climbCells.Terrain[at]}/{(BlockId)climbCells.Engine[at]} ");
+                if (Collides(climbCells.Terrain[at]) != Collides(climbCells.Engine[at]))
                 {
-                    disagree.Add($"the walker holds rock {h} m up the face, but the Engine's block there ({(BlockId)cells.Engine[at]}) is not climbable");
+                    disagree.Add($"the terrain and the Engine disagree on the face {h} m up ({(BlockId)climbCells.Terrain[at]} vs {(BlockId)climbCells.Engine[at]}): a stale chunk");
+                }
+                else if (h >= 1 && h < c.Pitch && o <= 0f && !BlockRegistry.Get((BlockId)climbCells.Engine[at]).Climbable)
+                {
+                    disagree.Add($"the walker holds rock {h} m up the face, but the Engine's block there ({(BlockId)climbCells.Engine[at]}) is not climbable");
                 }
             }
 
@@ -517,7 +527,8 @@ internal sealed partial class DungeonModule
             if (playerRail is null && (offStand > SteerOffMetres || offHeading > SteerOffDegrees))
             {
                 disagree.Add(string.Create(CultureInfo.InvariantCulture, $"the player stands {offStand:F2} m and {offHeading:F0} degrees off the expected stand, where the controller {(expectedTops ? "would climb" : "would not climb either")}"));
-                if (expectedTops) verdict ??= "steering: the walk does not bring the player to the face the walker climbs";
+                // Only where the player stands at the spot read: elsewhere their stand says nothing about this spot's steering.
+                if (expectedTops && Vector3.Distance(playerFeet, feet) <= SpotIsPlayerMetres) verdict ??= "steering: the walk does not bring the player to the face the walker climbs";
             }
             else if (playerRail is ClimbRail pr && pr.TopFeetY < c.Ledge.Y - 0.05)
             {
@@ -530,6 +541,76 @@ internal sealed partial class DungeonModule
         Line($"verdict: {verdict ?? (disagree.Count == 0 ? "the walker and the controller agree here; look at the walk's timing (a jump, a held key) or the next spot" : "see the disagreements")}");
         return new SpotReport(text.ToString(), cells, climb, nearest);
     }
+
+    /// <summary>Where the walker's feet stand at a cell of its way (the cell's foot, its column's centre), in world metres.</summary>
+    private static Vector3 WalkerFeet(WalkerWay ww, int i) =>
+        new(ww.Way.Cells[i].X + ww.X0 + 0.5f, ww.Way.Cells[i].Y + ww.Y0, ww.Way.Cells[i].Z + ww.Z0 + 0.5f);
+
+    /// <summary>The walker's expectation about a spot: the nearest cell of its way, and the next climb within a few cells of it.</summary>
+    private static (int Best, ExpectedClimb? Climb) Expect(WalkerWay ww, Vector3 feet)
+    {
+        IReadOnlyList<(int X, int Y, int Z)> wc = ww.Way.Cells;
+        int best = 0;
+        for (int i = 1; i < wc.Count; i++)
+        {
+            if (Vector3.DistanceSquared(WalkerFeet(ww, i), feet) < Vector3.DistanceSquared(WalkerFeet(ww, best), feet)) best = i;
+        }
+
+        for (int i = Math.Max(1, best - 1); i < Math.Min(wc.Count, best + SpotClimbAhead); i++)
+        {
+            if (ww.Way.Moves[i] != CaveWalker.Move.Climb) continue;
+            (long X, long Y, long Z) foot = (wc[i - 1].X + ww.X0, wc[i - 1].Y + ww.Y0, wc[i - 1].Z + ww.Z0);
+            (long X, long Y, long Z) ledge = (wc[i].X + ww.X0, wc[i].Y + ww.Y0, wc[i].Z + ww.Z0);
+            return (best, new ExpectedClimb(foot, ledge, (int)(ledge.X - foot.X), (int)(ledge.Z - foot.Z), (int)(ledge.Y - foot.Y), i));
+        }
+
+        return (best, null);
+    }
+
+    /// <summary>
+    /// Assisted, for traversal diagnostics (#11226): the laid way as JSON for a stall record - the steering way (world
+    /// points a body's height over the floor), the walker's way (each cell's feet and how it was reached), and with a spot
+    /// (here, along:&lt;m&gt; or x,y,z,heading) the walker's expectation there: its nearest cell, its move, its standing cell, the
+    /// next climb's foot, ledge, axis and pitch. A resume compares the way it lays again against the record's.
+    /// </summary>
+    internal string WayRecord(string spec)
+    {
+        if (walkWay is null)
+        {
+            return "{\"error\":\"no way laid: craft.cave.plan way first\"}";
+        }
+
+        CultureInfo inv = CultureInfo.InvariantCulture;
+        string F(float v) => v.ToString("0.###", inv);
+        StringBuilder json = new("{\"kind\":\"traversal-way\",\"version\":1");
+        json.Append(inv, $",\"length\":{F(Length(walkWay))},\"steering\":[").AppendJoin(',', walkWay.Select(p => $"[{F(p.X)},{F(p.Y)},{F(p.Z)}]")).Append(']');
+        if (walkerWay is WalkerWay ww && plannedWay)
+        {
+            json.Append(inv, $",\"walker\":{{\"system\":\"{ww.Held.Id}\",\"origin\":[{ww.X0},{ww.Y0},{ww.Z0}],\"moves\":\"walk,drop,climb\",\"cells\":[");
+            json.AppendJoin(',', ww.Way.Cells.Select((c, i) => $"[{c.X + ww.X0},{c.Y + ww.Y0},{c.Z + ww.Z0},{(int)ww.Way.Moves[i]}]")).Append("]}");
+            if (spec != "" && SpotOf(spec) is (Vector3 feet, float heading))
+            {
+                (int best, ExpectedClimb? c) = Expect(ww, feet);
+                Vector3 stand = WalkerFeet(ww, best);
+                json.Append(inv, $",\"expected\":{{\"feet\":[{F(feet.X)},{F(feet.Y)},{F(feet.Z)}],\"heading\":{F(heading)},\"cell\":{best},\"move\":\"{ww.Way.Moves[best]}\",\"standing\":[{F(stand.X)},{F(stand.Y)},{F(stand.Z)}]");
+                if (best + 1 < ww.Way.Cells.Count) json.Append(inv, $",\"nextMove\":\"{ww.Way.Moves[best + 1]}\",\"nextRise\":{ww.Way.Cells[best + 1].Y - ww.Way.Cells[best].Y}");
+                if (c is not null) json.Append(inv, $",\"climb\":{{\"cell\":{c.Index},\"foot\":[{c.Foot.X},{c.Foot.Y},{c.Foot.Z}],\"ledge\":[{c.Ledge.X},{c.Ledge.Y},{c.Ledge.Z}],\"axis\":[{c.Dx},{c.Dz}],\"pitch\":{c.Pitch}}}");
+                json.Append('}');
+            }
+        }
+
+        return json.Append('}').ToString();
+    }
+
+    /// <summary>
+    /// Whether the cells read hold every cell a climb's rule reads (<see cref="CaveWalker.ExplainClimb"/>): the foot and the
+    /// floor under it, the climber's column to its head over the ledge, the face, the ledge and its landing, a cell inside
+    /// the faces (the walker reads outside its grid as open).
+    /// </summary>
+    private static bool ClimbCovered(SpotCells cells, ExpectedClimb c) =>
+        cells.Holds(c.Foot.X, c.Foot.Y - 1, c.Foot.Z, 1) && cells.Holds(c.Foot.X, c.Ledge.Y + 2, c.Foot.Z, 1)
+        && cells.Holds(c.Ledge.X + c.Dx, c.Ledge.Y + 1, c.Ledge.Z + c.Dz, 1)
+        && cells.Holds(c.Ledge.X + c.Dz, c.Ledge.Y, c.Ledge.Z + c.Dx, 1) && cells.Holds(c.Ledge.X - c.Dz, c.Ledge.Y, c.Ledge.Z - c.Dx, 1);
 
     /// <summary>A collision floor: the first surface a ray down meets over a cell's foot (world height), or null.</summary>
     private float? CollisionFloor((long X, long Y, long Z) cell) =>

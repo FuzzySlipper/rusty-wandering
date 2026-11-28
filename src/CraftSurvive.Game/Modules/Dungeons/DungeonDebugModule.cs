@@ -49,6 +49,9 @@ public sealed class DungeonDebugModule : IDebugCommandModule
     [DebugCommand("craft.cave.dump", Description = "Assisted, for traversal diagnostics (#11226): the spot's 3D dump as JSON (a 17 m cube about here, along:<metres> or <x>,<y>,<z>,<heading>): voxels (walker measure, terrain and Engine materials), the collision as a ray lattice meets it, static pieces' triangles, the walker's way, the steering way, the player and the report; the CMS's Traversal page shows it.")]
     public string CaveDump(string spec) => dungeons.Dump(spec);
 
+    [DebugCommand("craft.cave.way", Description = "Assisted, for traversal diagnostics (#11226): the laid way as JSON for a stall record - the steering way, the walker's way (each cell and how it is reached) and, given a spot (here, along:<metres> or <x>,<y>,<z>,<heading>; '-' for none), the walker's expectation there (nearest cell, move, standing cell, next climb's foot, ledge, axis and pitch).")]
+    public string CaveWay(string spec) => dungeons.WayRecord(spec == "-" ? "" : spec);
+
     [DebugCommand("craft.cave.store", Description = "Assisted, for retention proof (#10888 R10888-4): read says which of the caves asked for this session the store keeps for this world, and how many probe records; probe first writes 30 small probe records through the store as though 30 more caves had been generated (more than the 24 it once let go after).")]
     public string CaveStoreProbe(string action) => dungeons.CaveStoreProbe(action);
 
