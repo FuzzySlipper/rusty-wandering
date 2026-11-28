@@ -7,6 +7,123 @@ using CraftSurvive.Game.Tests;
 // candidate, how many after redrawing, and why the rest fail. Pass a seed count to draw more, or
 // "section <seed>" to print one dungeon's side sections, or "engine <a|b|c> <seeds> [sweep] [quiet]"
 // for the Engine's route check in detail.
+// walkers <count> [nocarve]: the gravity-aware reach check (#10908) on caves under the world as the walking session generates
+// them (UnderCaves.Settings: the cave box, entered underground at its way in): on each cave's 1 m voxels as the game samples
+// them, from the way in to the spring and back, and from every main-route point on, walking, stepping a cell, dropping one way
+// and climbing pitches of at most 8 m onto ledges, with no edits. "nocarve" generates them without the walker carve, for the
+// before-and-after comparison: reach, and the complexity the cave keeps (chambers, rifts, open volume) and what the carve edited.
+if (args is ["walkers", string walkerCount, ..])
+{
+    int count = int.Parse(walkerCount, System.Globalization.CultureInfo.InvariantCulture);
+    bool carve = !args.Contains("nocarve");
+    System.Numerics.Vector2 UnderWayIn = new(12.5f, 48.5f);
+    const int RoutePointEvery = 16, UnderBoxChunksX = 6, UnderBoxChunksY = 4, UnderBoxChunksZ = 6;
+    int there = 0, back = 0, both = 0, settled = 0, routePoints = 0, routeReached = 0, routeLeft = 0, everyPoint = 0;
+    long chambers = 0, rifts = 0, formations = 0, conduits = 0, waterfalls = 0, communities = 0, overgrowth = 0, ecology = 0, openCells = 0, dug = 0, floored = 0, touchDug = 0, touchFloored = 0, drops = 0, climbs = 0, highestPitch = 0;
+    double generateMs = 0;
+    for (int i = 0; i < count; i++)
+    {
+        ulong seed = 0x9E37_79B9_7F4A_7C15UL * (ulong)(i + 1);
+        // The walking session's own caves under the world (UnderCaves.Settings, whose box and way in are CavePlacement's - not
+        // compiled here), with the walker carve or without it.
+        KarstCave.Settings settings = KarstCave.Next with
+        {
+            ChunksX = UnderBoxChunksX, ChunksY = UnderBoxChunksY, ChunksZ = UnderBoxChunksZ, Underground = true, WayIn = UnderWayIn, WalkerCarve = carve,
+        };
+        Stopwatch walkerClock = Stopwatch.StartNew();
+        var generated = KarstCave.Generate(seed, 1d, null, CaveSetting.Temperate, settings);
+        generateMs += walkerClock.Elapsed.TotalMilliseconds;
+        DungeonLayout layout = generated.Layout;
+        Func<System.Numerics.Vector3, float> shape = layout.Shape!;
+        int sx = settings.ChunksX * 16, sy = settings.ChunksY * 16, sz = settings.ChunksZ * 16;
+        (bool[] solid, bool[] rock) = CaveWalker.Cells(sx, sy, sz, shape);
+        openCells += rock.Count(c => !c);
+        CaveWalker walker = new(sx, sy, sz, solid, rock: rock);
+        if (generated.Report.Shape is KarstCave.Features features)
+        {
+            chambers += features.Chambers.Length;
+            rifts += features.Rifts.Length;
+        }
+
+        string verdict = generated.Verdict.Reason;
+        formations += ReadCount(verdict, "formations");
+        conduits += ReadCount(verdict, "conduits");
+        waterfalls += ReadCount(verdict, "waterfalls");
+        communities += layout.Communities.Count;
+        overgrowth += layout.Overgrowth.Count;
+        ecology += layout.Ecology.Count;
+        foreach (KarstCave.WalkerLeg leg in generated.Report.WalkerLegs)
+        {
+            dug += leg.Dug;
+            floored += leg.Floored;
+        }
+
+        touchDug += generated.Report.WalkerTouchUp.Dug;
+        touchFloored += generated.Report.WalkerTouchUp.Floored;
+        if (layout.MainRoute.Count < 2) continue;
+        System.Numerics.Vector3 a = layout.MainRoute[0], b = layout.MainRoute[^1];
+        (int, int, int)? from = walker.Settle((int)a.X, (int)a.Y, (int)a.Z, across: 3, down: 12);
+        (int, int, int)? to = walker.Settle((int)b.X, (int)b.Y, (int)b.Z, across: 3, down: 12);
+        if (from is not (int, int, int) f || to is not (int, int, int) t)
+        {
+            Console.WriteLine($"seed {seed:x}: no floor at {(from is null ? "the way in" : "the spring")}");
+            continue;
+        }
+
+        settled++;
+        CaveWalker.Way? down = walker.Find(f, t, edits: false), up = walker.Find(t, f, edits: false);
+        if (down is not null) { there++; drops += down.Drops; climbs += down.Climbs; highestPitch = Math.Max(highestPitch, HighestPitch(down)); }
+        if (up is not null) { back++; highestPitch = Math.Max(highestPitch, HighestPitch(up)); }
+        if (down is not null && up is not null) both++;
+
+        // Every main-route point (one each ~8 m): reached from the way in, and left again - back to the way in or on to the spring.
+        HashSet<(int X, int Y, int Z)> fromWayIn = walker.Reach(f);
+        bool all = true;
+        int points = 0, reached = 0, left = 0;
+        for (int p = 0; p < layout.MainRoute.Count; p += RoutePointEvery)
+        {
+            System.Numerics.Vector3 q = layout.MainRoute[p];
+            if (walker.Settle((int)q.X, (int)q.Y, (int)q.Z, across: 2, down: 6) is not (int, int, int) at) continue;
+            points++;
+            bool isReached = fromWayIn.Contains(at);
+            HashSet<(int X, int Y, int Z)> onward = walker.Reach(at);
+            bool isLeft = onward.Any(c => Near(c, f) || Near(c, t));
+            reached += isReached ? 1 : 0;
+            left += isLeft ? 1 : 0;
+            all &= isReached && isLeft;
+        }
+
+        routePoints += points;
+        routeReached += reached;
+        routeLeft += left;
+        everyPoint += all ? 1 : 0;
+        Console.WriteLine($"seed {seed:x}: way in to spring {(down is null ? "NO" : $"{down.Cells.Count} m, {down.Drops} drops, {down.Climbs} climbs")}; back {(up is null ? "NO" : $"{up.Cells.Count} m, {up.Drops} drops, {up.Climbs} climbs")}; route points {reached}/{points} reached, {left}/{points} left");
+    }
+
+    Console.WriteLine(System.FormattableString.Invariant(
+        $"walkers{(carve ? " (carve)" : " (no carve)")}: {count} caves, {settled} with both ends on a floor; way in to spring {there}, back {back}, both {both}; every route point reached and left in {everyPoint} ({routeReached}/{routePoints} reached, {routeLeft}/{routePoints} left); drops {drops}, climbs {climbs} on the way down, highest pitch {highestPitch} m; chambers {chambers}, rifts {rifts}, formations {formations}, conduits {conduits}, waterfalls {waterfalls}, communities {communities}, overgrowth {overgrowth}, ecology {ecology}, open {openCells / Math.Max(1, count)} m3 a cave; carve dug {dug}, floored {floored}; touch-up dug {touchDug}, floored {touchFloored}; generate {generateMs / Math.Max(1, count):F0} ms a cave"));
+    return 0;
+
+    static long ReadCount(string text, string word)
+    {
+        System.Text.RegularExpressions.Match match = System.Text.RegularExpressions.Regex.Match(text, $@"(\d+) {word}");
+        return match.Success ? long.Parse(match.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture) : 0;
+    }
+
+    static bool Near((int X, int Y, int Z) c, (int X, int Y, int Z) d) => Math.Abs(c.X - d.X) <= 1 && Math.Abs(c.Y - d.Y) <= 1 && Math.Abs(c.Z - d.Z) <= 1;
+
+    static long HighestPitch(CaveWalker.Way way)
+    {
+        long most = 0;
+        for (int k = 1; k < way.Cells.Count; k++)
+        {
+            if (way.Moves[k] == CaveWalker.Move.Climb) most = Math.Max(most, way.Cells[k].Y - way.Cells[k - 1].Y);
+        }
+
+        return most;
+    }
+}
+
 if (args is ["render", string renderSeed, string output, ..] && args.Length <= 4)
 {
     ulong chosen = ulong.Parse(renderSeed, System.Globalization.CultureInfo.InvariantCulture);

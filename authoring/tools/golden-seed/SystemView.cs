@@ -31,156 +31,66 @@ internal static class SystemView
     private const byte Crawl = 4;
     private const byte Stand = 5;
 
-    internal static string Make(JsonObject systemJson, string level, float measureStep = FineGrid.DefaultStep)
+    /// <summary>
+    /// The system's boxes generated as the walking session generates them (#11219: the plan's seeds, settings and ports through
+    /// <see cref="PlannedCaveSettings"/>, the karst generator through <see cref="DungeonCandidates"/>), stitched and measured.
+    /// </summary>
+    internal static string Make(UndergroundSystem system, string level, float measureStep = FineGrid.DefaultStep)
     {
         Stopwatch totalClock = Stopwatch.StartNew();
-        string id = systemJson["id"]!.GetValue<string>();
-        double temperature = systemJson["temperature"]!.GetValue<double>();
-        double moisture = systemJson["moisture"]!.GetValue<double>();
-
-        JsonArray boxesJson = systemJson["boxes"]!.AsArray();
-        JsonArray linksJson = systemJson["links"]!.AsArray();
-        JsonArray mouthsJson = systemJson["mouths"]!.AsArray();
-        JsonArray bigSpacesJson = systemJson["bigSpaces"]!.AsArray();
-
+        string id = system.Id;
         List<PlannedBox> boxes = [];
         double minX = double.MaxValue, minY = double.MaxValue, minZ = double.MaxValue;
         double maxX = double.MinValue, maxY = double.MinValue, maxZ = double.MinValue;
-        foreach (JsonNode? node in boxesJson)
+        foreach (UndergroundBox b in system.Boxes)
         {
-            JsonObject b = node!.AsObject();
-            JsonArray origin = b["origin"]!.AsArray();
-            JsonArray chunks = b["chunks"]!.AsArray();
-            int cx = chunks[0]!.GetValue<int>(), cy = chunks[1]!.GetValue<int>(), cz = chunks[2]!.GetValue<int>();
-            double ox = origin[0]!.GetValue<double>(), oy = origin[1]!.GetValue<double>(), oz = origin[2]!.GetValue<double>();
-            float sx = cx * 16f, sy = cy * 16f, sz = cz * 16f;
-            minX = Math.Min(minX, ox); minY = Math.Min(minY, oy); minZ = Math.Min(minZ, oz);
-            maxX = Math.Max(maxX, ox + sx); maxY = Math.Max(maxY, oy + sy); maxZ = Math.Max(maxZ, oz + sz);
-            boxes.Add(new PlannedBox(
-                b["index"]!.GetValue<int>(),
-                ox, oy, oz, cx, cy, cz, sx, sy, sz,
-                b["depth"]!.GetValue<float>(),
-                b["waterLocalY"]!.GetValue<float>(),
-                ulong.Parse(b["seed"]!.GetValue<string>(), NumberStyles.HexNumber, CultureInfo.InvariantCulture)));
+            float sx = b.ChunksX * 16f, sy = b.ChunksY * 16f, sz = b.ChunksZ * 16f;
+            minX = Math.Min(minX, b.OriginX); minY = Math.Min(minY, b.OriginY); minZ = Math.Min(minZ, b.OriginZ);
+            maxX = Math.Max(maxX, b.OriginX + sx); maxY = Math.Max(maxY, b.OriginY + sy); maxZ = Math.Max(maxZ, b.OriginZ + sz);
+            boxes.Add(new PlannedBox(b.Index, b.OriginX, b.OriginY, b.OriginZ, b.ChunksX, b.ChunksY, b.ChunksZ, sx, sy, sz, b.DepthBelowSurface, b.WaterTableLocalY, b.BoxSeed));
         }
 
-        // Links: each a port on both boxes. A shaft's port is on the lower box's roof and the upper box's floor at the same x, z.
+        Dictionary<int, List<KarstCave.BoundaryPort>> portsByBox = PlannedCaveSettings.PortsByBox(system);
         List<PlannedLink> links = [];
-        Dictionary<int, List<KarstCave.BoundaryPort>> portsByBox = boxes.ToDictionary(b => b.Index, _ => new List<KarstCave.BoundaryPort>());
-        for (int i = 0; i < linksJson.Count; i++)
+        for (int i = 0; i < system.Links.Count; i++)
         {
-            JsonObject l = linksJson[i]!.AsObject();
-            int from = l["from"]!.GetValue<int>(), to = l["to"]!.GetValue<int>();
-            KarstCave.BoxFace fromFace = Enum.Parse<KarstCave.BoxFace>(l["fromFace"]!.GetValue<string>());
-            KarstCave.BoxFace toFace = Enum.Parse<KarstCave.BoxFace>(l["toFace"]!.GetValue<string>());
-            float faceU = l["faceU"]!.GetValue<float>();
-            float faceV = l["faceV"]!.GetValue<float>();
-            JsonArray at = l["at"]!.AsArray();
-            float wx = at[0]!.GetValue<float>(), wy = at[1]!.GetValue<float>(), wz = at[2]!.GetValue<float>();
-            float radius = l["radius"]!.GetValue<float>();
-            float waterWorldY = l["waterY"]!.GetValue<float>();
-            string kind = l["kind"]!.GetValue<string>();
-            ulong seamSeed = ulong.Parse(l["seamSeed"]!.GetValue<string>(), NumberStyles.HexNumber, CultureInfo.InvariantCulture);
-            PlannedBox boxA = boxes[from], boxB = boxes[to];
-            bool vertical = fromFace is KarstCave.BoxFace.PosY or KarstCave.BoxFace.NegY;
-            float localVA = vertical ? faceV : wy - (float)boxA.OriginY;
-            float localVB = vertical ? faceV : wy - (float)boxB.OriginY;
-            if (!vertical && (localVA < 4f || localVA > boxA.SizeY - 4f || localVB < 4f || localVB > boxB.SizeY - 4f))
-            {
-                throw new InvalidOperationException(
-                    $"Link L{i} ({from}<->{to}) at world Y={wy:F1} lies outside box A [{boxA.OriginY:F1}..{boxA.OriginY + boxA.SizeY:F1}] or box B [{boxB.OriginY:F1}..{boxB.OriginY + boxB.SizeY:F1}].");
-            }
-
-            portsByBox[from].Add(new KarstCave.BoundaryPort(fromFace, faceU, localVA, radius, waterWorldY - (float)boxA.OriginY, seamSeed, $"L{i}:{from}->{to}"));
-            portsByBox[to].Add(new KarstCave.BoundaryPort(toFace, faceU, localVB, radius, waterWorldY - (float)boxB.OriginY, seamSeed, $"L{i}:{to}->{from}"));
-            links.Add(new PlannedLink(i, from, to, fromFace, toFace, faceU, localVA, localVB, wx, wy, wz, radius, waterWorldY, kind, vertical));
+            UndergroundLink l = system.Links[i];
+            bool vertical = l.Kind == UndergroundLinkKind.Shaft;
+            float localVA = vertical ? l.FaceV : l.WorldY - (float)boxes[l.FromBox].OriginY;
+            float localVB = vertical ? l.FaceV : l.WorldY - (float)boxes[l.ToBox].OriginY;
+            links.Add(new PlannedLink(i, l.FromBox, l.ToBox, (KarstCave.BoxFace)l.FromFace, (KarstCave.BoxFace)l.ToFace, l.FaceU, localVA, localVB,
+                l.WorldX, l.WorldY, l.WorldZ, l.RadiusMetres, l.WaterLevelWorldY, l.Kind.ToString(), vertical));
         }
 
-        // Mouths: a sinkhole is the box's way in (where a tendril from the surface ends, as today's caves have it); a mouth on a
-        // side face is a port of its own, opening onto its tendril or, for a cliff, onto the open air.
         Dictionary<int, Vector2> wayInByBox = [];
         List<PlannedMouth> mouths = [];
-        for (int i = 0; i < mouthsJson.Count; i++)
+        for (int i = 0; i < system.Mouths.Count; i++)
         {
-            JsonObject m = mouthsJson[i]!.AsObject();
-            int bi = m["box"]!.GetValue<int>();
-            KarstCave.BoxFace face = Enum.Parse<KarstCave.BoxFace>(m["face"]!.GetValue<string>());
-            float u = m["portU"]!.GetValue<float>(), v = m["portV"]!.GetValue<float>();
-            string kind = m["kind"]!.GetValue<string>();
-            PlannedBox b = boxes[bi];
+            UndergroundMouth m = system.Mouths[i];
+            KarstCave.BoxFace face = (KarstCave.BoxFace)m.Face;
             if (face == KarstCave.BoxFace.PosY)
             {
-                wayInByBox.TryAdd(bi, new Vector2(u, v));
-                mouths.Add(new PlannedMouth(i, bi, face, kind, null, m["tendril"]!.GetValue<float>()));
+                wayInByBox.TryAdd(m.BoxIndex, new Vector2(m.PortU, m.PortV));
+                mouths.Add(new PlannedMouth(i, m.BoxIndex, face, m.Kind.ToString(), null, m.TendrilMetres));
                 continue;
             }
 
-            KarstCave.BoundaryPort port = new(face, u, v, MouthPortRadius, b.WaterLocalY, b.Seed ^ (ulong)(0xA0 + i), $"M{i}");
-            portsByBox[bi].Add(port);
-            mouths.Add(new PlannedMouth(i, bi, face, kind, port, m["tendril"]!.GetValue<float>()));
-        }
-
-        // The water leaves each box by the way toward the system's outlet: its resurgence's box, else its lowest box.
-        PlannedMouth? resurgence = mouths.FirstOrDefault(m => m.Kind == "Resurgence" && m.Port is not null);
-        int outlet = resurgence?.Box ?? boxes.OrderBy(b => b.OriginY).ThenBy(b => b.Index).First().Index;
-        Dictionary<int, int> hops = new() { [outlet] = 0 };
-        Queue<int> frontier = new([outlet]);
-        while (frontier.TryDequeue(out int at))
-        {
-            foreach (PlannedLink l in links)
-            {
-                int other = l.From == at ? l.To : l.To == at ? l.From : -1;
-                if (other >= 0 && hops.TryAdd(other, hops[at] + 1)) frontier.Enqueue(other);
-            }
+            KarstCave.BoundaryPort port = portsByBox[m.BoxIndex].First(p => p.Label == PlannedCaveSettings.MouthLabel(i));
+            mouths.Add(new PlannedMouth(i, m.BoxIndex, face, m.Kind.ToString(), port, m.TendrilMetres));
         }
 
         Dictionary<int, Vector2?> springByBox = [];
-        foreach (PlannedBox b in boxes)
-        {
-            Vector2? spring = null;
-            if (b.Index == outlet && resurgence?.Port is KarstCave.BoundaryPort rp)
-            {
-                Vector3 a = rp.AnchorPoint(b.SizeX, b.SizeY, b.SizeZ);
-                spring = new Vector2(a.X, a.Z);
-            }
-            else if (hops.TryGetValue(b.Index, out int mine) && mine > 0)
-            {
-                KarstCave.BoundaryPort? down = portsByBox[b.Index].Where(p => p.Label.StartsWith('L')).FirstOrDefault(p =>
-                {
-                    PlannedLink l = links[int.Parse(p.Label[1..p.Label.IndexOf(':')], CultureInfo.InvariantCulture)];
-                    int other = l.From == b.Index ? l.To : l.From;
-                    return hops.GetValueOrDefault(other, int.MaxValue) < mine;
-                });
-                if (down is KarstCave.BoundaryPort dp)
-                {
-                    Vector3 a = dp.AnchorPoint(b.SizeX, b.SizeY, b.SizeZ);
-                    spring = new Vector2(a.X, a.Z);
-                }
-            }
-
-            springByBox[b.Index] = spring;
-        }
-
         List<GeneratedBox> generated = new(boxes.Count);
         double totalGenerateMs = 0;
         foreach (PlannedBox b in boxes)
         {
             Stopwatch boxClock = Stopwatch.StartNew();
-            KarstCave.Settings settings = new(b.ChunksX, b.ChunksY, b.ChunksZ)
-            {
-                Underground = true,
-                NoCommunities = true,
-                NoRuin = true,
-                WayIn = wayInByBox.TryGetValue(b.Index, out Vector2 way) ? way : null,
-                BoundaryPorts = portsByBox[b.Index],
-                WaterTableTarget = b.WaterLocalY,
-                SpringAt = springByBox[b.Index],
-            };
-            CaveSetting caveSetting = new(temperature, moisture, b.Depth);
-            (DungeonLayout layout, _, DungeonVerdict verdict, _, KarstCave.Report report) = KarstCave.Generate(b.Seed, 1d, null, caveSetting, settings);
+            (ulong boxSeed, CaveSetting caveSetting, KarstCave.Settings settings) = PlannedCaveSettings.For(system, b.Index, UnderCaves.Settings());
+            springByBox[b.Index] = settings.SpringAt;
+            DungeonCandidate candidate = DungeonCandidates.Generate(DungeonApproach.Karst, boxSeed, 0, 1d, null, caveSetting, settings);
             boxClock.Stop();
             totalGenerateMs += boxClock.Elapsed.TotalMilliseconds;
-            generated.Add(new GeneratedBox(b, layout, verdict.Reason, report, boxClock.Elapsed.TotalMilliseconds));
+            generated.Add(new GeneratedBox(b, candidate.Layout, candidate.Verdict.Reason, candidate.Karst!, boxClock.Elapsed.TotalMilliseconds));
         }
 
         // The output grid (1 m, the CMS's views) over the system's bounds.
@@ -402,22 +312,145 @@ internal static class SystemView
             });
         }
 
-        JsonArray bigMarkers = [];
-        foreach (JsonNode? bsNode in bigSpacesJson)
+        // The gravity-aware reach check (#10908): on 1 m cells sampled as the game samples them (each box's shape at its voxel
+        // centres), the way a body with weight takes - walking, stepping, dropping one way, climbing pitches onto ledges - from
+        // each side mouth to each other, with no edits.
+        JsonArray walkerLegs = [], walkerReach = [], walkerSeams = [], walkerBroken = [];
+        int walkerFound = 0, walkerPairs = 0;
         {
-            JsonObject bs = bsNode!.AsObject();
-            int bi = bs["box"]!.GetValue<int>();
-            PlannedBox b = boxes[bi];
-            JsonArray loc = bs["local"]!.AsArray();
+            bool[] cells = new bool[cellCount], rockCells = new bool[cellCount];
+            Array.Fill(cells, true);
+            Array.Fill(rockCells, true);
+            foreach (GeneratedBox gb in generated)
+            {
+                PlannedBox b = gb.Box;
+                Func<Vector3, float> shape = gb.Layout.Shape!;
+                int ox = (int)Math.Round(b.OriginX - minX), oy = (int)Math.Round(b.OriginY - minY), oz = (int)Math.Round(b.OriginZ - minZ);
+                Parallel.For(0, (int)b.SizeZ, z =>
+                {
+                    for (int y = 0; y < (int)b.SizeY; y++)
+                    for (int x = 0; x < (int)b.SizeX; x++)
+                    {
+                        int wx = ox + x, wy = oy + y, wz = oz + z;
+                        if (wx >= gx || wy >= gy || wz >= gz) continue;
+                        float v = shape(new Vector3(x + 0.5f, y + 0.5f, z + 0.5f));
+                        cells[(((wz * gy) + wy) * gx) + wx] = v < CaveWalker.OpenAtLeast;
+                        rockCells[(((wz * gy) + wy) * gx) + wx] = v < 0f;
+                    }
+                });
+            }
+
+            CaveWalker walker = new(gx, gy, gz, cells, rock: rockCells);
+
+            int ownerAt((int X, int Y, int Z) c)
+            {
+                foreach (PlannedBox b in boxes)
+                {
+                    double lx = c.X + 0.5 - (b.OriginX - minX), ly = c.Y + 0.5 - (b.OriginY - minY), lz = c.Z + 0.5 - (b.OriginZ - minZ);
+                    if (lx >= 0 && ly >= 0 && lz >= 0 && lx < b.SizeX && ly < b.SizeY && lz < b.SizeZ) return b.Index;
+                }
+
+                return -1;
+            }
+
+            List<(PlannedMouth Mouth, (int X, int Y, int Z)? At)> ends = [];
+            foreach (PlannedMouth m in mouths.Where(m => m.Port is not null))
+            {
+                PlannedBox b = boxes[m.Box];
+                Vector3 a = Local(b, m.Port!.Value.AnchorPoint(b.SizeX, b.SizeY, b.SizeZ));
+                ends.Add((m, walker.Settle((int)MathF.Floor(a.X), (int)MathF.Floor(a.Y), (int)MathF.Floor(a.Z), across: 3, down: 12)));
+            }
+
+            // What each mouth reaches: how many standing cells, and the lowest, per box (a diagnostic for failed pairs).
+            foreach (var from in ends)
+            {
+                if (from.At is not (int, int, int) f) { walkerReach.Add(new JsonObject { ["from"] = $"M{from.Mouth.Index}", ["settled"] = false }); continue; }
+                HashSet<(int X, int Y, int Z)> r = walker.Reach(f);
+                JsonObject perBox = [];
+                foreach (var group in r.GroupBy(c => ownerAt(c)).Where(g => g.Key >= 0).OrderBy(g => g.Key))
+                {
+                    perBox[group.Key.ToString(CultureInfo.InvariantCulture)] = group.Count();
+                }
+
+                walkerReach.Add(new JsonObject { ["from"] = $"M{from.Mouth.Index}", ["at"] = $"{f.Item1},{f.Item2},{f.Item3}", ["cells"] = r.Count, ["byBox"] = perBox });
+            }
+
+            // Each side seam walked both ways between its two boxes' port ends as the walker carve stands them (on the port
+            // passage's floor, KarstCave.SidePortStandIn in from the face); where one fails, the reached cell nearest its goal.
+            for (int i = 0; i < system.Links.Count; i++)
+            {
+                UndergroundLink link = system.Links[i];
+                if (link.Kind == UndergroundLinkKind.Shaft) continue;
+                (int, int, int)? SeamEnd(int box, int other)
+                {
+                    PlannedBox b = boxes[box];
+                    KarstCave.BoundaryPort port = portsByBox[box].First(p => p.Label == PlannedCaveSettings.LinkLabel(i, box, other));
+                    Vector3 inside = Local(b, port.FacePoint(b.SizeX, b.SizeY, b.SizeZ) + (port.InwardNormal * KarstCave.SidePortStandIn));
+                    return walker.Settle((int)MathF.Floor(inside.X), (int)MathF.Floor(inside.Y), (int)MathF.Floor(inside.Z), across: 1, down: 4);
+                }
+
+                (int, int, int)? a = SeamEnd(link.FromBox, link.ToBox), b = SeamEnd(link.ToBox, link.FromBox);
+                JsonObject seam = new() { ["link"] = i, ["from"] = link.FromBox, ["to"] = link.ToBox, ["fromAt"] = a?.ToString(), ["toAt"] = b?.ToString() };
+                foreach ((string name, (int, int, int)? start, (int, int, int)? goal) in new[] { ("there", a, b), ("back", b, a) })
+                {
+                    if (start is not (int, int, int) s0 || goal is not (int X, int Y, int Z) g0) { seam[name] = "unsettled"; continue; }
+                    if (walker.Find(s0, g0, edits: false) is not null) { seam[name] = "walked"; continue; }
+                    var nearest = walker.Reach(s0).MinBy(c => Math.Abs(c.X - g0.Item1) + Math.Abs(c.Y - g0.Item2) + Math.Abs(c.Z - g0.Item3));
+                    seam[name] = $"stopped at {nearest} for {g0}";
+                }
+
+                walkerSeams.Add(seam);
+            }
+
+            // Each box's carve legs walked again with no edits on the shape as it was finished (#10908): what a stage after the
+            // carve closed shows here, with the reached cell nearest the leg's end.
+            foreach (GeneratedBox gb in generated)
+            foreach (KarstCave.WalkerLeg l in gb.Report.WalkerLegs.Where(l => l.Found))
+            {
+                int ox = (int)Math.Round(gb.Box.OriginX - minX), oy = (int)Math.Round(gb.Box.OriginY - minY), oz = (int)Math.Round(gb.Box.OriginZ - minZ);
+                (int, int, int) s0 = (l.From.X + ox, l.From.Y + oy, l.From.Z + oz), g0 = (l.To.X + ox, l.To.Y + oy, l.To.Z + oz);
+                if (walker.Find(s0, g0, edits: false) is not null) continue;
+                var nearest = walker.Reach(s0).MinBy(c => Math.Abs(c.X - g0.Item1) + Math.Abs(c.Y - g0.Item2) + Math.Abs(c.Z - g0.Item3));
+                walkerBroken.Add(new JsonObject
+                {
+                    ["box"] = gb.Box.Index, ["route"] = l.Route, ["back"] = l.Back, ["from"] = l.From.ToString(), ["to"] = l.To.ToString(),
+                    ["stoppedAt"] = (nearest.X - ox, nearest.Y - oy, nearest.Z - oz).ToString(),
+                });
+            }
+
+            foreach (var from in ends)
+            foreach (var to in ends)
+            {
+                if (from.Mouth == to.Mouth) continue;
+                walkerPairs++;
+                CaveWalker.Way? way = from.At is (int, int, int) f && to.At is (int, int, int) t ? walker.Find(f, t, edits: false) : null;
+                if (way is not null) walkerFound++;
+                walkerLegs.Add(new JsonObject
+                {
+                    ["from"] = $"M{from.Mouth.Index}",
+                    ["to"] = $"M{to.Mouth.Index}",
+                    ["found"] = way is not null,
+                    ["metres"] = way?.Cells.Count ?? 0,
+                    ["drops"] = way?.Drops ?? 0,
+                    ["climbs"] = way?.Climbs ?? 0,
+                    ["searched"] = way?.Expanded ?? 0,
+                });
+            }
+        }
+
+        JsonArray bigMarkers = [];
+        foreach (UndergroundBigSpace bs in system.BigSpaces)
+        {
+            PlannedBox b = boxes[bs.BoxIndex];
             bigMarkers.Add(new JsonObject
             {
-                ["box"] = bi,
-                ["kind"] = bs["kind"]!.GetValue<string>(),
-                ["radius"] = bs["radius"]!.GetValue<float>(),
+                ["box"] = bs.BoxIndex,
+                ["kind"] = bs.Kind.ToString(),
+                ["radius"] = bs.RadiusMetres,
                 ["at"] = new JsonArray(
-                    Math.Round((b.OriginX - minX) + loc[0]!.GetValue<double>(), 1),
-                    Math.Round((b.OriginY - minY) + loc[1]!.GetValue<double>(), 1),
-                    Math.Round((b.OriginZ - minZ) + loc[2]!.GetValue<double>(), 1)),
+                    Math.Round((b.OriginX - minX) + bs.LocalX, 1),
+                    Math.Round((b.OriginY - minY) + bs.LocalY, 1),
+                    Math.Round((b.OriginZ - minZ) + bs.LocalZ, 1)),
             });
         }
 
@@ -467,6 +500,12 @@ internal static class SystemView
             ["boxes"] = boxReports,
             ["seams"] = seamReports,
             ["shafts"] = shafts,
+            ["walker"] = new JsonObject { ["pairs"] = walkerPairs, ["found"] = walkerFound, ["legs"] = walkerLegs, ["reach"] = walkerReach, ["seams"] = walkerSeams, ["brokenAfterCarve"] = walkerBroken,
+                ["carve"] = new JsonArray([.. generated.SelectMany(g => g.Report.WalkerLegs.Select(l => (JsonNode)new JsonObject
+                {
+                    ["box"] = g.Box.Index, ["route"] = l.Route, ["back"] = l.Back, ["found"] = l.Found, ["cells"] = l.Cells,
+                    ["drops"] = l.Drops, ["climbs"] = l.Climbs, ["dug"] = l.Dug, ["floored"] = l.Floored,
+                }))]) },
             ["routes"] = allRoutes,
             ["mouths"] = mouthMarkers,
             ["bigSpaces"] = bigMarkers,

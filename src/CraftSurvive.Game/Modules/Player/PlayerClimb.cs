@@ -73,6 +73,15 @@ internal static class PlayerClimb
         long wallZ = alongX ? cellZ : cellZ + sign;
         double position = alongX ? x : z;
         double face = (alongX ? cellX : cellZ) + (sign > 0 ? 1d : 0d);
+        // Smooth ground lies behind its blocks' faces in places (#10908), so a body pressed to it can stand with its centre in
+        // the face's own cell: that cell is the face, held from its near side.
+        if (BlockRegistry.Get(material(cellX, feet + 1, cellZ)).Climbable)
+        {
+            wallX = cellX;
+            wallZ = cellZ;
+            face = (alongX ? cellX : cellZ) + (sign > 0 ? 0d : 1d);
+        }
+
         if (Math.Abs(face - position) > PlayerConstants.CapsuleRadius + HoldReachMetres)
         {
             return null;

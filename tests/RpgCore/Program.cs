@@ -732,6 +732,9 @@ Check.That(taken is ClimbRail rail
     && Math.Abs(rail.X - (1 - PlayerConstants.CapsuleRadius - PlayerClimb.StandoffMetres)) < 1e-9 && rail.Z == 0.5
     && rail.BottomFeetY == -1 && Math.Abs(rail.TopFeetY - (6 + PlayerConstants.SpawnClearance)) < 1e-6,
     $"taking hold of a stone wall must give a rail from below the feet to its top ledge, gave {taken}");
+Check.That(PlayerClimb.Find(1.08, 0, 0.5, east, 0f, ClimbGrip.Taking, ClimbWorld) is ClimbRail recessed
+    && Math.Abs(recessed.X - (1 - PlayerConstants.CapsuleRadius - PlayerClimb.StandoffMetres)) < 1e-9 && recessed.BottomFeetY == -1,
+    $"a body pressed into smooth ground behind its blocks' face (its centre in the wall's cell) must take hold of that face, gave {PlayerClimb.Find(1.08, 0, 0.5, east, 0f, ClimbGrip.Taking, ClimbWorld)}");
 Check.That(PlayerClimb.Find(0.7, 0, 0.5, east, 1f, ClimbGrip.None, ClimbWorld) is null,
     "pushing into a wall without taking hold must never climb");
 Check.That(PlayerClimb.Find(0.7, 3, 0.5, east, 0f, ClimbGrip.Holding, ClimbWorld) is not null,
