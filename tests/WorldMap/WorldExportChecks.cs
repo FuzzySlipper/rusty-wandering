@@ -110,7 +110,7 @@ internal static class WorldExportChecks
         {
             // A mouth's cave is its planned box (#11220), generated from the plan's own seed for that box.
             PlannedUnderground.Placed? placed = recipe.Underground.System(cave.GetProperty("system").GetString()!);
-            int box = cave.GetProperty("box").GetInt32();
+            int box = cave.GetProperty("boxIndex").GetInt32();
             ulong? seed = placed is null || box >= placed.System.Boxes.Count ? null
                 : CraftSurvive.Game.Modules.Dungeons.PlannedCaveSettings.For(placed.System, box, CraftSurvive.Game.Modules.Dungeons.UnderCaves.Settings()).Seed;
             if (seed is null || cave.GetProperty("seed").GetString() != seed.Value.ToString("x16", System.Globalization.CultureInfo.InvariantCulture)) seedDiffers++;

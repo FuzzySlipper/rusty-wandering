@@ -505,7 +505,7 @@ internal sealed class WorldExport
                 writer.WriteNumber("z", site.Z);
                 writer.WriteNumber("ground", site.Ground);
                 writer.WriteString("system", planned.System.Id);
-                writer.WriteNumber("box", planned.Box.Index);
+                writer.WriteNumber("boxIndex", planned.Box.Index);
                 writer.WriteString("seed", caveSeed.ToString("x16", CultureInfo.InvariantCulture));
                 writer.WriteStartArray("setting");
                 writer.WriteNumberValue(setting.Temperature);

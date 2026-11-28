@@ -361,7 +361,7 @@ string pair = EnginePair(repo);
                 caves.Add(new JsonObject
                 {
                     ["id"] = row["id"]!.GetValue<string>(), ["x"] = row["x"]!.GetValue<long>(), ["z"] = row["z"]!.GetValue<long>(),
-                    ["ground"] = row["ground"]!.GetValue<long>(), ["system"] = row["system"]!.GetValue<string>(), ["box"] = row["box"]!.GetValue<int>(),
+                    ["ground"] = row["ground"]!.GetValue<long>(), ["system"] = row["system"]!.GetValue<string>(), ["box"] = row["boxIndex"]!.GetValue<int>(),
                     ["seed"] = row["seed"]!.GetValue<string>(), ["setting"] = row["setting"]!.DeepClone(), ["tile"] = new JsonArray(tx, tz),
                 });
             }

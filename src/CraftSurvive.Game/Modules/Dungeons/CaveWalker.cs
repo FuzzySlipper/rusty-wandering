@@ -115,7 +115,13 @@ internal sealed class CaveWalker
         x >= editMargin && z >= editMargin && y >= editMargin && x < sizeX - editMargin && z < sizeZ - editMargin && y < sizeY - editMargin;
 
     /// <summary>Whether a body stands at a cell: its two cells open, rock under its feet.</summary>
-    internal bool Standing(int x, int y, int z) => !Solid(x, y, z) && !Solid(x, y + 1, z) && Solid(x, y - 1, z) && Broad(x, y - 1, z) && Pinch(x, y + 1, z) is null;
+    internal bool Standing(int x, int y, int z) => !Solid(x, y, z) && !Solid(x, y + 1, z) && Footing(x, y - 1, z) && Broad(x, y - 1, z) && Pinch(x, y + 1, z) is null;
+
+    /// <summary>
+    /// Whether a cell holds a body up (#11226's first case): rock, or a barely open cell lying on rock, whose surface is within
+    /// it. A stack of barely open cells is no floor: smooth ground's surface lies at the rock under the stack, metres lower.
+    /// </summary>
+    internal bool Footing(int x, int y, int z) => Rock(x, y, z) || (Solid(x, y, z) && Rock(x, y - 1, z));
 
     /// <summary>
     /// Where a body's head is pinched (#10908): rock either side of it along one axis, a crack one cell wide at head height,
@@ -188,7 +194,7 @@ internal sealed class CaveWalker
                 }
             }
 
-            if (!Solid(c.X, c.Y - 1, c.Z))
+            if (!Footing(c.X, c.Y - 1, c.Z))
             {
                 if (!edits || !LayFloor(c.X, c.Y - 1, c.Z, ref cost)) return false;
             }
@@ -226,10 +232,11 @@ internal sealed class CaveWalker
         // ground rounds into something a body slides off or hits its head on); over a deep gap, a bridge at the cell alone.
         bool LayFloor(int x, int y, int z, ref float cost)
         {
-            if (Solid(x, y, z)) return true;
+            if (Footing(x, y, z)) return true;
+            // Down through open and barely open cells alike, to the rock under them.
             int depth = 0;
-            while (depth < GuardDropCells && !Solid(x, y - 1 - depth, z) && y - 1 - depth > 0) depth++;
-            int fill = Solid(x, y - 1 - depth, z) ? depth + 1 : 1;
+            while (depth < GuardDropCells && !Rock(x, y - 1 - depth, z) && y - 1 - depth > 0) depth++;
+            int fill = Rock(x, y - 1 - depth, z) ? depth + 1 : 1;
             for (int f = 0; f < fill; f++)
             {
                 if (!Editable(x, y - f, z)) return false;
