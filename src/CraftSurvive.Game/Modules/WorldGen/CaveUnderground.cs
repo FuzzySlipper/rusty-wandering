@@ -345,9 +345,9 @@ internal sealed class CaveUnderground
     /// <summary>Bumped whenever a cave is admitted or let go, so what was generated without it is generated again.</summary>
     internal long Revision { get; private set; }
 
-    /// <summary>The box a cave mouth opens into (#11220: a mouth the plan put in its cell), or null for any other site.</summary>
+    /// <summary>The box a cave mouth opens into (#11220: the plan mouth the site stands for), or null for any other site.</summary>
     internal CavePlacement? For(PoiSite site) =>
-        site.Kind == PoiKind.CaveMouth && Plan.MouthIn(site.CellX, site.CellZ) is PlannedUnderground.Mouth mouth ? Plan.BoxOf(mouth) : null;
+        site.Kind == PoiKind.CaveMouth && Plan.MouthOf(site) is PlannedUnderground.Mouth mouth ? Plan.BoxOf(mouth) : null;
 
     /// <summary>The ways underground whose tendril or box reaches into a region of columns.</summary>
     internal IReadOnlyList<CavePlacement> Near(long xMin, long xMax, long zMin, long zMax) => Plan.BoxesNear(xMin, xMax, zMin, zMax);

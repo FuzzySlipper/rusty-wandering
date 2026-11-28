@@ -109,7 +109,8 @@ if (command == "check")
     bool prefetch = CheckPrefetchRecovery(Console.WriteLine);
     bool underground = UndergroundExport.CheckPlan(Console.WriteLine);
     bool seams = SystemView.CheckSeamMetrics(Console.WriteLine);
-    return Pinch.CheckRegressions(Console.WriteLine) && throats && prefetch && underground && seams ? 0 : 1;
+    bool sharedMouths = UndergroundExport.CheckSharedMouthCell(Console.WriteLine);
+    return Pinch.CheckRegressions(Console.WriteLine) && throats && prefetch && underground && seams && sharedMouths ? 0 : 1;
 }
 
 if (command == "column")

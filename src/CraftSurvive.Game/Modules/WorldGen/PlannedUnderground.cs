@@ -66,12 +66,14 @@ internal sealed class PlannedUnderground
     }
 
     /// <summary>
-    /// The mouth an anchor cell of the landmark lattice holds, or null: the first (by system, then mouth) whose opening lies in
-    /// the cell. A cell holds at most one site, so a second mouth in the same cell is a cave with no landmark of its own.
+    /// The mouths whose openings lie in an anchor cell of the landmark lattice, ordered by system then mouth: the first is the
+    /// cell's own landmark (<see cref="PoiPlacement.SiteAt"/>), each further one a landmark of its own under an extra key
+    /// (<see cref="ExtraCellX"/>), so every planned mouth is enumerated, found and exported (#11220 R11220-1).
     /// </summary>
-    internal Mouth? MouthIn(long cellX, long cellZ)
+    internal IReadOnlyList<Mouth> MouthsIn(long cellX, long cellZ)
     {
         double centreX = (cellX + 0.5) * PoiConstants.CellSize, centreZ = (cellZ + 0.5) * PoiConstants.CellSize;
+        List<Mouth> found = [];
         foreach (Placed placed in SystemsNear(centreX, centreZ, PoiConstants.CellSize))
         {
             for (int i = 0; i < placed.System.Mouths.Count; i++)
@@ -80,13 +82,39 @@ internal sealed class PlannedUnderground
                 if (GridMath.FloorDivide((long)Math.Floor(m.WorldX), PoiConstants.CellSize) == cellX
                     && GridMath.FloorDivide((long)Math.Floor(m.WorldZ), PoiConstants.CellSize) == cellZ)
                 {
-                    return new Mouth(placed.System.Id, i, m);
+                    found.Add(new Mouth(placed.System.Id, i, m));
                 }
             }
         }
 
-        return null;
+        return found;
     }
+
+    /// <summary>
+    /// The mouth a cave-mouth site stands for: its cell's first, or the further one its extra key names; null for none.
+    /// </summary>
+    internal Mouth? MouthOf(PoiSite site)
+    {
+        (long cellX, int index) = CellOf(site.CellX);
+        IReadOnlyList<Mouth> mouths = MouthsIn(cellX, site.CellZ);
+        return index < mouths.Count ? mouths[index] : null;
+    }
+
+    /// <summary>
+    /// The anchor key a further mouth in a cell goes by: its cell's x moved by a whole <see cref="ExtraKeyStride"/> per index,
+    /// far past any cell a world holds, so its identity is stable and its cell recovered from it (<see cref="CellOf"/>).
+    /// </summary>
+    internal static long ExtraCellX(long cellX, int index) => cellX + (index * ExtraKeyStride);
+
+    /// <summary>A site's anchor cell and its index among its cell's mouths (0 for the cell's own site).</summary>
+    internal static (long CellX, int Index) CellOf(long keyX)
+    {
+        long index = GridMath.FloorDivide(keyX + (ExtraKeyStride / 2), ExtraKeyStride);
+        return (keyX - (index * ExtraKeyStride), (int)index);
+    }
+
+    /// <summary>The span of anchor cells one mouth index takes in an extra key: far past a world's cells.</summary>
+    private const long ExtraKeyStride = 1L << 40;
 
     /// <summary>The box a mouth opens into, as a placement, or null.</summary>
     internal CavePlacement? BoxOf(Mouth mouth) =>

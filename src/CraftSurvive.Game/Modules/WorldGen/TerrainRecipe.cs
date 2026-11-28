@@ -57,7 +57,7 @@ internal sealed class TerrainRecipe : ITerrainColumns
         }, LazyThreadSafetyMode.ExecutionAndPublication);
         underground = new(() => new PlannedUnderground(Map, (x, z) => ContinuousHeightAt((long)Math.Floor(x), (long)Math.Floor(z))),
             LazyThreadSafetyMode.ExecutionAndPublication);
-        pois = new PoiPlacement(configuration.Contract, draws, this, radius, (cellX, cellZ) => Underground.MouthIn(cellX, cellZ));
+        pois = new PoiPlacement(configuration.Contract, draws, this, radius, (cellX, cellZ) => Underground.MouthsIn(cellX, cellZ));
         crossings = new CrossingPlacement(configuration.Contract, draws, this, radius);
         caves = new CaveUnderground(() => Underground);
     }
@@ -378,13 +378,15 @@ internal sealed class TerrainRecipe : ITerrainColumns
         for (long anchorX = firstPoiX; anchorX <= lastPoiX; anchorX++)
         for (long anchorZ = firstPoiZ; anchorZ <= lastPoiZ; anchorZ++)
         {
-            if (pois.SiteAt(anchorX, anchorZ) is PoiSite site
-                && site.X + poiReach >= x0 && site.X - poiReach <= x1
-                && site.Z + poiReach >= z0 && site.Z - poiReach <= z1
-                && site.Ground + PoiConstants.MaximumStructureHeight >= y0
-                && site.Ground - PoiConstants.MaximumCarveDepth <= y1)
+            foreach (PoiSite site in pois.SitesAt(anchorX, anchorZ))
             {
-                (overlappingPois ??= []).Add(site);
+                if (site.X + poiReach >= x0 && site.X - poiReach <= x1
+                    && site.Z + poiReach >= z0 && site.Z - poiReach <= z1
+                    && site.Ground + PoiConstants.MaximumStructureHeight >= y0
+                    && site.Ground - PoiConstants.MaximumCarveDepth <= y1)
+                {
+                    (overlappingPois ??= []).Add(site);
+                }
             }
         }
 
@@ -652,10 +654,8 @@ internal sealed class TerrainRecipe : ITerrainColumns
     /// </summary>
     private PoiVoxel PoiAt(long x, long y, long z) =>
         FirstInNeighbourhood<PoiVoxel>(x, z, PoiConstants.CellSize, (anchorX, anchorZ) =>
-            pois.SiteAt(anchorX, anchorZ) is PoiSite site
-            && PoiStructures.MaterialAt(site, x, y, z) is { IsNone: false } voxel
-                ? voxel
-                : null) ?? PoiVoxel.None;
+            pois.SitesAt(anchorX, anchorZ).Select(site => PoiStructures.MaterialAt(site, x, y, z)).Cast<PoiVoxel?>()
+                .FirstOrDefault(voxel => voxel is { IsNone: false })) ?? PoiVoxel.None;
 
     /// <summary>How far beyond a place's own reach trees stay away (metres), so a canopy does not hide it.</summary>
     private const long PlaceTreeClearance = 4;
@@ -669,7 +669,7 @@ internal sealed class TerrainRecipe : ITerrainColumns
         {
             for (long anchorZ = cellZ - 1; anchorZ <= cellZ + 1; anchorZ++)
             {
-                if (pois.SiteAt(anchorX, anchorZ) is PoiSite site && Math.Abs(x - site.X) <= reach && Math.Abs(z - site.Z) <= reach)
+                if (pois.SitesAt(anchorX, anchorZ).Any(site => Math.Abs(x - site.X) <= reach && Math.Abs(z - site.Z) <= reach))
                 {
                     return true;
                 }
@@ -910,36 +910,34 @@ internal sealed class TerrainRecipe : ITerrainColumns
         {
             for (long anchorZ = firstCellZ; anchorZ <= lastCellZ; anchorZ++)
             {
-                if (pois.SiteAt(anchorX, anchorZ) is not PoiSite site)
+                foreach (PoiSite site in pois.SitesAt(anchorX, anchorZ))
                 {
-                    continue;
-                }
-
-                long xMinimum = Math.Max(xStart, site.X - reach);
-                long xMaximum = Math.Min(xEnd, site.X + reach);
-                long zMinimum = Math.Max(zStart, site.Z - reach);
-                long zMaximum = Math.Min(zEnd, site.Z + reach);
-                long yTop = Math.Min(yMaximum, site.Ground + PoiConstants.MaximumStructureHeight);
-                long yBottom = Math.Max(yMinimum, site.Ground - PoiConstants.MaximumCarveDepth);
-                for (long y = yBottom; y <= yTop; y++)
-                {
-                    for (long x = xMinimum; x <= xMaximum; x++)
+                    long xMinimum = Math.Max(xStart, site.X - reach);
+                    long xMaximum = Math.Min(xEnd, site.X + reach);
+                    long zMinimum = Math.Max(zStart, site.Z - reach);
+                    long zMaximum = Math.Min(zEnd, site.Z + reach);
+                    long yTop = Math.Min(yMaximum, site.Ground + PoiConstants.MaximumStructureHeight);
+                    long yBottom = Math.Max(yMinimum, site.Ground - PoiConstants.MaximumCarveDepth);
+                    for (long y = yBottom; y <= yTop; y++)
                     {
-                        for (long z = zMinimum; z <= zMaximum; z++)
+                        for (long x = xMinimum; x <= xMaximum; x++)
                         {
-                            PoiVoxel poi = PoiStructures.MaterialAt(site, x, y, z);
-                            if (poi.IsNone)
+                            for (long z = zMinimum; z <= zMaximum; z++)
                             {
-                                continue;
-                            }
+                                PoiVoxel poi = PoiStructures.MaterialAt(site, x, y, z);
+                                if (poi.IsNone)
+                                {
+                                    continue;
+                                }
 
-                            TerrainColumn column = ColumnAt(x, z);
-                            ushort before = BaseMaterialAt(new VoxelAddress(x, y, z), column);
-                            ushort after = StructurePasses.ApplySite(before, poi, y, column);
-                            if ((before == TerrainConstants.EmptyMaterial)
-                                != (after == TerrainConstants.EmptyMaterial))
-                            {
-                                return true;
+                                TerrainColumn column = ColumnAt(x, z);
+                                ushort before = BaseMaterialAt(new VoxelAddress(x, y, z), column);
+                                ushort after = StructurePasses.ApplySite(before, poi, y, column);
+                                if ((before == TerrainConstants.EmptyMaterial)
+                                    != (after == TerrainConstants.EmptyMaterial))
+                                {
+                                    return true;
+                                }
                             }
                         }
                     }

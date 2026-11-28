@@ -659,6 +659,34 @@ internal static class UndergroundExport
         }
     }
 
+    /// <summary>
+    /// Two plan mouths in one landmark cell (#11220 R11220-1): on the golden seed, cell (73, -100) holds mouths 0 and 1 of
+    /// ug:fine:1:-2:2, opening into boxes 5 and 11. Both must be cave-mouth sites of their own (distinct ids, both among the
+    /// sites the cell's neighbourhood collects) and each must resolve to its own planned box.
+    /// </summary>
+    internal static bool CheckSharedMouthCell(Action<string> log)
+    {
+        TerrainConfiguration configuration = new(GoldenSeed, GoldenSize);
+        TerrainRecipe recipe = configuration.CreateRecipe(EngineTerrainDraws.Shared, WorldMapGenerator.Generate(configuration));
+        PoiSite[] here = [.. recipe.Placement.SitesAt(SharedCellX, SharedCellZ).Where(s => s.Kind == PoiKind.CaveMouth)];
+        List<PoiSite> near = [];
+        recipe.Placement.CollectSitesNear((SharedCellX * PoiConstants.CellSize) + (PoiConstants.CellSize / 2), (SharedCellZ * PoiConstants.CellSize) + (PoiConstants.CellSize / 2),
+            PoiConstants.CellSize, near);
+        int[] boxes = [.. here.Select(s => recipe.Caves.For(s)?.Planned?.Box.Index ?? -1)];
+        int[] mouthBoxes = [.. here.Select(s => recipe.Underground.MouthOf(s)?.Opening.BoxIndex ?? -2)];
+        bool ok = here.Length == 2 && here.Select(s => s.Id).Distinct().Count() == 2 && here.All(s => near.Any(n => n.Id == s.Id))
+            && boxes.SequenceEqual(mouthBoxes) && boxes.Distinct().Count() == 2
+            && here.All(s => recipe.Underground.MouthOf(s)?.SystemId == SharedSystemId);
+        log(FormattableString.Invariant(
+            $"{(ok ? "ok" : "FAILED")}: landmark cell ({SharedCellX}, {SharedCellZ}) holds {here.Length} plan mouths as sites [{string.Join(", ", here.Select(s => s.Id))}], into boxes [{string.Join(", ", boxes)}] of {SharedSystemId} (want 2, each its own box)"));
+        return ok;
+    }
+
+    private const ulong GoldenSeed = 19;
+    private const int GoldenSize = 390_000;
+    private const long SharedCellX = 73, SharedCellZ = -100;
+    private const string SharedSystemId = "ug:fine:1:-2:2";
+
     /// <summary>Deterministic &amp; geometric sanity check for <see cref="UndergroundPlan"/> run by <c>golden-seed check</c>.</summary>
     internal static bool CheckPlan(Action<string> report)
     {

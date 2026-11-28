@@ -583,7 +583,7 @@ internal sealed partial class DungeonModule
         terrain.Recipe.Placement.CollectSitesNear((long)Math.Floor(feet.X), (long)Math.Floor(feet.Z), (long)Math.Ceiling(reach), sites);
         PlannedUnderground.Mouth? nearest = player.InSeparateSpace ? null : sites.Where(s => s.Kind == PoiKind.CaveMouth)
             .OrderBy(s => Math.Abs(s.X - feet.X) + Math.Abs(s.Z - feet.Z))
-            .Select(s => Underground.MouthIn(s.CellX, s.CellZ)).FirstOrDefault(m => m is not null);
+            .Select(s => Underground.MouthOf(s)).FirstOrDefault(m => m is not null);
         if (nearest is not PlannedUnderground.Mouth mouth || Underground.BoxOf(mouth) is not CavePlacement cave)
         {
             return string.Create(CultureInfo.InvariantCulture, $"no cave mouth within {reach:F0} m");

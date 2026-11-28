@@ -334,7 +334,7 @@ internal sealed class WorldExport
         for (long cellZ = firstCellZ; cellZ <= lastCellZ; cellZ++)
         for (long cellX = firstCellX; cellX <= lastCellX; cellX++)
         {
-            if (terrain.Placement.SiteAt(cellX, cellZ) is PoiSite site) sites.Add(site);
+            sites.AddRange(terrain.Placement.SitesAt(cellX, cellZ));
             if (terrain.Crossings.SiteAt(cellX, cellZ) is CrossingSite crossing) crossings.Add(crossing);
         }
 
@@ -453,16 +453,13 @@ internal sealed class WorldExport
             cells.Add((x, z));
 
         ParallelOptions parallel = new() { MaxDegreeOfParallelism = workers };
-        PoiSite?[] foundSites = new PoiSite?[cells.Count];
+        // Each cell's sites: its own, and any further plan mouth's (#11220 R11220-1).
+        PoiSite[][] foundSites = new PoiSite[cells.Count][];
         Parallel.For(0, cells.Count, parallel, k =>
         {
-            foundSites[k] = terrain.Placement.SiteAt(cells[k].X, cells[k].Z);
+            foundSites[k] = [.. terrain.Placement.SitesAt(cells[k].X, cells[k].Z)];
         });
-        List<PoiSite> sites = [];
-        foreach (PoiSite? found in foundSites)
-        {
-            if (found is PoiSite site) sites.Add(site);
-        }
+        List<PoiSite> sites = [.. foundSites.SelectMany(found => found)];
 
         Stage("places");
         CrossingSite?[] crossings = new CrossingSite?[cells.Count];

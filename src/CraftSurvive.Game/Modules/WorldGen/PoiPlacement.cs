@@ -88,16 +88,18 @@ internal sealed class PoiPlacement
     private readonly ITerrainDraws draws;
     private readonly ITerrainColumns columns;
     private readonly long radius;
-    private readonly Func<long, long, PlannedUnderground.Mouth?>? mouthIn;
+    private readonly Func<long, long, IReadOnlyList<PlannedUnderground.Mouth>>? mouthsIn;
+    /// <summary>Each anchor cell's further plan mouths as sites of their own (#11220 R11220-1), read by the chunk workers too.</summary>
+    private readonly SharedCache<(long X, long Z), PoiSite[]> extraMouths = new(PoiConstants.SiteCacheLimit);
     /// <summary>Each anchor cell's decision, read by the chunk workers too (#10907).</summary>
     private readonly SharedCache<(long X, long Z), PoiSite?> cells = new(PoiConstants.SiteCacheLimit);
 
-    /// <param name="mouthIn">The cave mouth the underground plan puts in an anchor cell (#11220), or null for a world with no plan.</param>
+    /// <param name="mouthsIn">The cave mouths the underground plan puts in an anchor cell (#11220), or null for a world with no plan.</param>
     internal PoiPlacement(TerrainGeneratorContract contract, ITerrainDraws draws, ITerrainColumns columns, long radius,
-        Func<long, long, PlannedUnderground.Mouth?>? mouthIn = null)
+        Func<long, long, IReadOnlyList<PlannedUnderground.Mouth>>? mouthsIn = null)
     {
         this.contract = contract;
-        this.mouthIn = mouthIn;
+        this.mouthsIn = mouthsIn;
         this.draws = draws ?? throw new ArgumentNullException(nameof(draws));
         this.columns = columns ?? throw new ArgumentNullException(nameof(columns));
         this.radius = radius;
@@ -132,6 +134,39 @@ internal sealed class PoiPlacement
     }
 
     /// <summary>
+    /// Every site an anchor cell holds: its own (<see cref="SiteAt"/>), then each further plan mouth whose opening lies in it
+    /// (#11220 R11220-1), a cave-mouth landmark of its own under an extra key (<see cref="PlannedUnderground.ExtraCellX"/>).
+    /// </summary>
+    internal IEnumerable<PoiSite> SitesAt(long cellX, long cellZ)
+    {
+        if (SiteAt(cellX, cellZ) is PoiSite site)
+        {
+            yield return site;
+        }
+
+        if (!extraMouths.TryGetValue((cellX, cellZ), out PoiSite[]? extras))
+        {
+            List<PoiSite> found = [];
+            IReadOnlyList<PlannedUnderground.Mouth> mouths = mouthsIn?.Invoke(cellX, cellZ) ?? [];
+            for (int i = 1; i < mouths.Count; i++)
+            {
+                if (MouthSite(PlannedUnderground.ExtraCellX(cellX, i), cellZ, mouths[i], TerrainGeneratorContract.PoiSeedVersion) is PoiSite extra)
+                {
+                    found.Add(extra);
+                }
+            }
+
+            extras = [.. found];
+            extraMouths.Set((cellX, cellZ), extras);
+        }
+
+        foreach (PoiSite extra in extras)
+        {
+            yield return extra;
+        }
+    }
+
+    /// <summary>
     /// Every site whose structure could reach within <paramref name="radius"/> blocks of
     /// a position, appended to <paramref name="into"/>. The bound is the notice radius
     /// plus a structure's own reach, so a caller that wants "sites I could be looking
@@ -155,7 +190,7 @@ internal sealed class PoiPlacement
         {
             for (long cellZ = firstZ; cellZ <= lastZ; cellZ++)
             {
-                if (SiteAt(cellX, cellZ) is PoiSite site)
+                foreach (PoiSite site in SitesAt(cellX, cellZ))
                 {
                     into.Add(site);
                 }
@@ -167,7 +202,7 @@ internal sealed class PoiPlacement
     {
         const uint seedVersion = TerrainGeneratorContract.PoiSeedVersion;
         // A cave mouth comes from the underground plan (#11220), and a cell holding one is its landmark.
-        if (mouthIn?.Invoke(cellX, cellZ) is PlannedUnderground.Mouth mouth && MouthSite(cellX, cellZ, mouth, seedVersion) is PoiSite opening)
+        if (mouthsIn?.Invoke(cellX, cellZ) is { Count: > 0 } mouths && MouthSite(cellX, cellZ, mouths[0], seedVersion) is PoiSite opening)
         {
             return opening;
         }
