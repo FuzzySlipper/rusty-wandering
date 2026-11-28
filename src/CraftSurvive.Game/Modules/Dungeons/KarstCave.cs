@@ -4375,7 +4375,10 @@ private static int MostBarrensPieces => Area(400);
         LastRuin = ruin;
         Mark("ruin-finish");
         Func<Vector3, float> shape = ruin is null ? cave.At : ruin.Shape(cave.At);
-        (shape, int touchDug, int touchFloored, IReadOnlyList<Vector3> touchedWays) = WalkerTouchUp(shape, cave.WalkerLegs);
+        (shape, int touchDug, int touchFloored, IReadOnlyList<Vector3> touchedWays, IReadOnlyList<Vector3>? walkedRoute) = WalkerTouchUp(shape, cave.WalkerLegs);
+        // The main route a body walks (#10908 R10908-4): with the walker carve, its way from the way in to the spring on the
+        // finished shape, so every point on it is reached from the way in and left again; else the generator's own.
+        IReadOnlyList<Vector3> mainRoute = walkedRoute is { Count: > 1 } ? walkedRoute : cave.MainRoute;
         Mark("walker-touch-up");
         // The ramp to its breach is fallen stone: rubble.
         Func<Vector3, BlockId> rockAt = ruin is null ? cave.RockAt : p => ruin.UnderRamp(p) ? RubbleRock : cave.RockAt(p);
@@ -4399,10 +4402,10 @@ private static int MostBarrensPieces => Area(400);
         // A ruin's own lights (its relics' rooms), before the route's.
         lights.AddRange((ruin?.Lights ?? []).Take(MostRuinLights));
         int routeLights = MostLights - lights.Count;
-        int step = Math.Max(1, cave.MainRoute.Count / Math.Max(1, routeLights));
-        for (int i = step / 2; i < cave.MainRoute.Count && lights.Count < MostLights; i += step)
+        int step = Math.Max(1, mainRoute.Count / Math.Max(1, routeLights));
+        for (int i = step / 2; i < mainRoute.Count && lights.Count < MostLights; i += step)
         {
-            Vector3 on = cave.MainRoute[i];
+            Vector3 on = mainRoute[i];
             lights.Add(StudyField.OnFloor(shape, on.X, on.Z, on.Y) + (Vector3.UnitY * LightAboveFloor));
         }
         DungeonCell arrival = StudyField.Cell(arrive);
@@ -4483,7 +4486,7 @@ private static int MostBarrensPieces => Area(400);
             Moisture = moisture,
             Drips = drips,
             Communities = cave.Communities,
-            MainRoute = cave.MainRoute,
+            MainRoute = mainRoute,
             PortRoutes = cave.PortPaths,
             FungalPockets = cave.FungalPockets,
             RuinMouth = ruin?.Mouth,
@@ -6431,11 +6434,14 @@ private static int MostBarrensPieces => Area(400);
     /// the stages after the carve - the fine forms, the seats, the ruin - may close a cell a leg walked or landed on, so a leg
     /// that no longer walks is found again with edits, and the shape takes those cells (and only those) as dug or floored.
     /// </summary>
-    private static (Func<Vector3, float> Shape, int Dug, int Floored, IReadOnlyList<Vector3> Walked) WalkerTouchUp(Func<Vector3, float> shape, IReadOnlyList<WalkerLeg> legs)
+    /// <returns>The shape with the touch-up's edits, their counts, every cell the final ways walk, and the spring route's final
+    /// way from the way in (null where it has none): the cave's main route as a body walks it.</returns>
+    private static (Func<Vector3, float> Shape, int Dug, int Floored, IReadOnlyList<Vector3> Walked, IReadOnlyList<Vector3>? Route) WalkerTouchUp(
+        Func<Vector3, float> shape, IReadOnlyList<WalkerLeg> legs)
     {
         if (!legs.Any(l => l.Found))
         {
-            return (shape, 0, 0, []);
+            return (shape, 0, 0, [], null);
         }
 
         int sx = (int)(FieldX * FieldStep), sy = (int)(FieldY * FieldStep), sz = (int)(FieldZ * FieldStep);
@@ -6447,15 +6453,20 @@ private static int MostBarrensPieces => Area(400);
         Mend(walker, legs, edits);
         Vector3[] walked = [.. legs.Where(l => l.Found).Select(l => walker.Find(l.From, l.To, edits: false)).OfType<CaveWalker.Way>()
             .SelectMany(w => w.Cells).Distinct().Select(c => new Vector3(c.X + 0.5f, c.Y + 0.5f, c.Z + 0.5f))];
+        Vector3[]? route = legs.FirstOrDefault(l => l.Found && l.Route == "spring" && !l.Back) is WalkerLeg spring
+            && SettledEnd(walker, spring.FromPoint) is (int, int, int) wayIn && SettledEnd(walker, spring.ToPoint) is (int, int, int) springEnd
+            && walker.Find(wayIn, springEnd, edits: false) is CaveWalker.Way way
+                ? [.. way.Cells.Select(c => new Vector3(c.X + 0.5f, c.Y + 0.5f, c.Z + 0.5f))]
+                : null;
         if (edits.Count == 0)
         {
-            return (shape, 0, 0, walked);
+            return (shape, 0, 0, walked, route);
         }
 
         int dug = edits.Values.Count(v => v > 0f);
         return (p => edits.TryGetValue(((int)MathF.Floor(p.X), (int)MathF.Floor(p.Y), (int)MathF.Floor(p.Z)), out float v)
             ? (v > 0f ? MathF.Max(shape(p), v) : MathF.Min(shape(p), v))
-            : shape(p), dug, edits.Count - dug, walked);
+            : shape(p), dug, edits.Count - dug, walked, route);
     }
 
     /// <summary>
